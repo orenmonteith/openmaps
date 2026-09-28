@@ -13,16 +13,37 @@
   var userEntity = null;
   var lastLod = { imageryZ: 19, sse: 4, resolutionScale: 1 };
 
-  function init() {
-    if (!global.Cesium || !global.TerrainBridge) {
-      setTimeout(init, 50);
-      return;
+  function showWebGlError(detail) {
+    var el = document.getElementById("cesiumContainer");
+    if (!el) return;
+    el.innerHTML =
+      '<div class="webgl-error">' +
+      "<h1>WebGL unavailable</h1>" +
+      "<p>This browser/session cannot create a WebGL context for 3D terrain.</p>" +
+      "<p>OpenMaps is meant for the <strong>Android app</strong> (Pixel WebView has WebGL). " +
+      "For the web preview, open the URL in Chrome/Firefox on a machine with GPU, " +
+      "or enable hardware acceleration.</p>" +
+      (detail
+        ? '<pre class="webgl-error-detail">' + String(detail).slice(0, 600) + "</pre>"
+        : "") +
+      "</div>";
+  }
+
+  function webGlWorks() {
+    try {
+      var c = document.createElement("canvas");
+      var gl =
+        c.getContext("webgl2", { failIfMajorPerformanceCaveat: false }) ||
+        c.getContext("webgl", { failIfMajorPerformanceCaveat: false }) ||
+        c.getContext("experimental-webgl", { failIfMajorPerformanceCaveat: false });
+      return !!gl;
+    } catch (e) {
+      return false;
     }
+  }
 
-    Cesium.Ion.defaultAccessToken = undefined;
-
-    var terrainProvider = TerrainBridge.createLocalTerrainProvider();
-    viewer = new Cesium.Viewer("cesiumContainer", {
+  function createViewer(terrainProvider) {
+    var base = {
       animation: false,
       timeline: false,
       baseLayerPicker: false,
@@ -40,15 +61,75 @@
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
       targetFrameRate: 30,
-      msaaSamples: 1,
-      contextOptions: {
+      msaaSamples: 1
+    };
+    // Softest first — remote/software GL often rejects high-performance + antialias.
+    var attempts = [
+      {
+        webgl: {
+          alpha: false,
+          antialias: false,
+          depth: true,
+          stencil: false,
+          powerPreference: "default",
+          failIfMajorPerformanceCaveat: false,
+          preserveDrawingBuffer: false
+        },
+        allowTextureFilterAnisotropic: false
+      },
+      {
+        webgl: {
+          alpha: false,
+          antialias: false,
+          powerPreference: "low-power",
+          failIfMajorPerformanceCaveat: false
+        }
+      },
+      {
         webgl: {
           alpha: false,
           antialias: true,
-          powerPreference: "high-performance"
+          powerPreference: "default",
+          failIfMajorPerformanceCaveat: false
         }
       }
-    });
+    ];
+    var lastErr = null;
+    for (var i = 0; i < attempts.length; i++) {
+      try {
+        return new Cesium.Viewer(
+          "cesiumContainer",
+          Object.assign({}, base, { contextOptions: attempts[i] })
+        );
+      } catch (err) {
+        lastErr = err;
+        var stale = document.getElementById("cesiumContainer");
+        if (stale) stale.innerHTML = "";
+      }
+    }
+    throw lastErr || new Error("Failed to construct Cesium.Viewer");
+  }
+
+  function init() {
+    if (!global.Cesium || !global.TerrainBridge) {
+      setTimeout(init, 50);
+      return;
+    }
+
+    if (!webGlWorks()) {
+      showWebGlError("No WebGL1/WebGL2 context from this browser.");
+      return;
+    }
+
+    Cesium.Ion.defaultAccessToken = undefined;
+
+    var terrainProvider = TerrainBridge.createLocalTerrainProvider();
+    try {
+      viewer = createViewer(terrainProvider);
+    } catch (err) {
+      showWebGlError(err && (err.message || err));
+      return;
+    }
 
     var scene = viewer.scene;
     // Match UI chrome — never flash Cesium's default blue clear/sky through gaps.

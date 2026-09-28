@@ -37,13 +37,16 @@ Grant location permission to use **Locate me**.
 
 ## Browser preview (terrain engine)
 
-Same Cesium assets + Terrarium DEM + Esri imagery API as the Android local server:
+Same Cesium assets + Terrarium DEM + Esri imagery API as the Android local server.
+Requires a browser with **WebGL** (Chrome/Firefox with GPU or SwiftShader). Embedded
+remote viewers without WebGL will show a clear error — use the Android APK on device
+for the real experience.
 
 ```bash
 cd tools/preview-server
 npm install
 npm start
-# open http://127.0.0.1:43123
+# open http://127.0.0.1:43123 in a local Chrome/Firefox tab
 ```
 
 ## Architecture
