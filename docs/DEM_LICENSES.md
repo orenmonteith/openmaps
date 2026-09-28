@@ -82,12 +82,11 @@ Imagery provider id: `esri-world-imagery`
 
 Imagery provider id: `usgs-imagery`
 
-## Geocoding & trails (runtime)
+## Geocoding (runtime)
 
 | Service | Use | Notes |
 | --- | --- | --- |
 | Nominatim (OSM) | Place search | Identify with app User-Agent; no bulk geocoding; respect usage policy |
-| Overpass API | Hiking/bike/ski ways | OSM ODbL; attribution to OpenStreetMap contributors |
 
 ## Honesty policy
 

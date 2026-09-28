@@ -6,8 +6,6 @@ import com.terrain.explorer.imagery.ImageryProvider
 import com.terrain.explorer.imagery.ImageryProviderSelector
 import com.terrain.explorer.search.GeocoderService
 import com.terrain.explorer.terrain.TerrainRepository
-import com.terrain.explorer.trails.TrailActivity
-import com.terrain.explorer.trails.TrailService
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -20,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Serves DEM, imagery, geocode, trails, and Cesium web assets to the WebView.
+ * Serves DEM, imagery, geocode, and Cesium web assets to the WebView.
  */
 class LocalTileServer(
     private val terrainRepository: TerrainRepository,
@@ -28,7 +26,6 @@ class LocalTileServer(
     private val assets: AssetManager,
     private val imageryPrefetcher: ImageryPrefetcher,
     private val geocoder: GeocoderService = GeocoderService(),
-    private val trailService: TrailService = TrailService(),
     port: Int = 0,
 ) : NanoHTTPD("127.0.0.1", port) {
 
@@ -88,7 +85,6 @@ class LocalTileServer(
                 uri == "/health" -> text(Response.Status.OK, "ok")
                 uri == "/debug" -> debug()
                 uri == "/geocode" -> geocode(params["q"])
-                uri == "/trails" -> trails(params)
                 uri == "/imagery/prefetch" -> prefetch(params)
                 uri == "/client/lod" -> clientLod(params)
                 uri.startsWith("/terrain/") && uri.endsWith(".heights") -> terrainHeights(uri)
@@ -137,34 +133,6 @@ class LocalTileServer(
             )
         }
         return json(JSONObject().put("results", arr))
-    }
-
-    private fun trails(params: Map<String, String>): Response {
-        val south = params["south"]?.toDoubleOrNull()
-        val west = params["west"]?.toDoubleOrNull()
-        val north = params["north"]?.toDoubleOrNull()
-        val east = params["east"]?.toDoubleOrNull()
-        if (south == null || west == null || north == null || east == null) {
-            return text(Response.Status.BAD_REQUEST, "bbox required")
-        }
-        // Guard huge bboxes (battery / Overpass).
-        if (north - south > 0.6 || east - west > 0.6) {
-            return newFixedLengthResponse(
-                Response.Status.OK,
-                "application/json",
-                """{"type":"FeatureCollection","features":[],"error":"bbox too large"}""",
-            ).also { addCors(it) }
-        }
-        val activity = when (params["activity"]?.uppercase()) {
-            "BIKE" -> TrailActivity.BIKE
-            "SKI" -> TrailActivity.SKI
-            "EXPLORE" -> TrailActivity.EXPLORE
-            else -> TrailActivity.HIKE
-        }
-        val geojson = runBlocking {
-            trailService.fetchTrails(south, west, north, east, activity)
-        }
-        return newFixedLengthResponse(Response.Status.OK, "application/json", geojson).also { addCors(it) }
     }
 
     private fun staticAsset(uri: String): Response {

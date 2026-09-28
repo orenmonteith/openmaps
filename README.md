@@ -10,7 +10,7 @@ Worldwide, offline-first **3D terrain** for Android: real DEM elevation meshes w
 - Near-frustum imagery prefetch (paused on low battery / offline); tile 404s are never cached
 - CesiumJS WebView renderer with orbit / tilt / zoom / pan
 - GPS on-mesh marker + locate / fly-to
-- Place search (Nominatim) and OSM trail overlays (hike / bike / ski / explore)
+- Place search (Nominatim)
 - Cache-first disk store for DEM + imagery (visited areas work offline)
 - Battery-aware rendering (`requestRenderMode`, FPS caps, WebView pause, low-power resolution scale)
 - Debug HUD: DEM, imagery source/Z, SSE, cache

@@ -14,7 +14,6 @@ import com.terrain.explorer.terrain.cache.GeoLodDiskCache
 import com.terrain.explorer.terrain.provider.ProviderRegistry
 import com.terrain.explorer.terrain.provider.ProviderSelector
 import com.terrain.explorer.terrain.server.LocalTileServer
-import com.terrain.explorer.trails.TrailService
 
 class TerrainApp : Application() {
     lateinit var cache: GeoLodDiskCache
@@ -58,7 +57,6 @@ class TerrainApp : Application() {
             assets = assets,
             imageryPrefetcher = imageryPrefetcher,
             geocoder = geocoder,
-            trailService = TrailService(),
         )
         tileServer.ensureStarted()
         networkMonitor = NetworkMonitor(this) { online ->

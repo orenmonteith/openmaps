@@ -11,9 +11,6 @@
   var settleTimer = null;
   var lodReportTimer = null;
   var userEntity = null;
-  var trailsDataSource = null;
-  var trailsEnabled = false;
-  var trailActivity = "HIKE";
   var lastLod = { imageryZ: 19, sse: 4, resolutionScale: 1 };
 
   function init() {
@@ -121,9 +118,6 @@
       },
       show: false
     });
-
-    trailsDataSource = new Cesium.GeoJsonDataSource("trails");
-    viewer.dataSources.add(trailsDataSource);
 
     bindInteractionThrottling();
     bindDynamicLod();
@@ -259,56 +253,6 @@
     });
   }
 
-  function styleTrailEntities(dataSource) {
-    var entities = dataSource.entities.values;
-    for (var i = 0; i < entities.length; i++) {
-      var e = entities[i];
-      if (e.polyline) {
-        e.polyline.width = 2.5;
-        e.polyline.clampToGround = true;
-        e.polyline.material = Cesium.Color.fromCssColorString("#FFB020").withAlpha(0.85);
-      }
-    }
-  }
-
-  function refreshTrails() {
-    if (!viewer || !trailsDataSource || !trailsEnabled) return;
-    var rect = viewer.camera.computeViewRectangle();
-    if (!rect) return;
-    var south = Cesium.Math.toDegrees(rect.south);
-    var west = Cesium.Math.toDegrees(rect.west);
-    var north = Cesium.Math.toDegrees(rect.north);
-    var east = Cesium.Math.toDegrees(rect.east);
-    if (north - south > 0.45 || east - west > 0.45) return;
-    var url =
-      TerrainBridge.tileServerBase() +
-      "/trails?south=" +
-      south +
-      "&west=" +
-      west +
-      "&north=" +
-      north +
-      "&east=" +
-      east +
-      "&activity=" +
-      trailActivity;
-    Cesium.GeoJsonDataSource.load(url, {
-      clampToGround: true,
-      stroke: Cesium.Color.fromCssColorString("#FFB020"),
-      strokeWidth: 2.5
-    })
-      .then(function (ds) {
-        trailsDataSource.entities.removeAll();
-        var vals = ds.entities.values;
-        for (var i = 0; i < vals.length; i++) {
-          trailsDataSource.entities.add(vals[i]);
-        }
-        styleTrailEntities(trailsDataSource);
-        viewer.scene.requestRender();
-      })
-      .catch(function () {});
-  }
-
   function pollDebug() {
     fetch(TerrainBridge.tileServerBase() + "/debug")
       .then(function (r) {
@@ -354,20 +298,6 @@
       userEntity.show = true;
       viewer.scene.requestRender();
     },
-    setTrailsEnabled: function (enabled) {
-      trailsEnabled = !!enabled;
-      if (!trailsEnabled && trailsDataSource) {
-        trailsDataSource.entities.removeAll();
-        viewer.scene.requestRender();
-      } else if (trailsEnabled) {
-        refreshTrails();
-      }
-    },
-    setTrailActivity: function (activity) {
-      trailActivity = (activity || "HIKE").toUpperCase();
-      if (trailsEnabled) refreshTrails();
-    },
-    refreshTrails: refreshTrails,
     resetNorth: function () {
       if (!viewer) return;
       var cam = viewer.camera;

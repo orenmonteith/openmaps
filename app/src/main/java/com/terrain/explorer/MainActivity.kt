@@ -9,7 +9,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,7 +34,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,12 +49,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.terrain.explorer.search.GeocodeResult
 import com.terrain.explorer.terrain.model.TerrainDebugInfo
-import com.terrain.explorer.trails.TrailActivity
 import com.terrain.explorer.ui.TerrainWebView
 import com.terrain.explorer.ui.flyTo
 import com.terrain.explorer.ui.resetNorth
-import com.terrain.explorer.ui.setTrailActivity
-import com.terrain.explorer.ui.setTrailsEnabled
 import com.terrain.explorer.ui.showUserLocation
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -141,21 +135,10 @@ private fun TerrainScreen(
 ) {
     var debug by remember { mutableStateOf(TerrainDebugInfo()) }
     var showDebug by remember { mutableStateOf(false) }
-    var engineReady by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
-    var trailsOn by remember { mutableStateOf(false) }
-    var activity by remember { mutableStateOf(TrailActivity.HIKE) }
     val scope = rememberCoroutineScope()
-
-    LaunchedEffect(engineReady) {
-        if (engineReady) {
-            webView?.setTrailsEnabled(false)
-            webView?.setTrailActivity(activity.name)
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -166,7 +149,7 @@ private fun TerrainScreen(
             tileServerPort = app.tileServer.boundPort,
             lowPower = lowPower,
             onDebug = { debug = it },
-            onReady = { engineReady = true },
+            onReady = { },
             webViewRef = { webView = it },
             modifier = Modifier.fillMaxSize(),
         )
@@ -183,9 +166,7 @@ private fun TerrainScreen(
                 onQueryChange = { query = it },
                 onSearch = {
                     scope.launch {
-                        status = "Searching…"
                         results = app.geocoder.search(query)
-                        status = if (results.isEmpty()) "No places found" else "${results.size} places"
                     }
                 },
             )
@@ -207,7 +188,6 @@ private fun TerrainScreen(
                                             flyHeightForPlace(r.displayName),
                                         )
                                         results = emptyList()
-                                        status = r.displayName
                                     }
                                     .padding(vertical = 8.dp, horizontal = 4.dp),
                             )
@@ -215,21 +195,6 @@ private fun TerrainScreen(
                     }
                 }
             }
-
-            ActivityRow(
-                selected = activity,
-                trailsOn = trailsOn,
-                onSelect = {
-                    activity = it
-                    webView?.setTrailActivity(it.name)
-                    status = "${it.name.lowercase()} trails"
-                },
-                onToggleTrails = {
-                    trailsOn = !trailsOn
-                    webView?.setTrailsEnabled(trailsOn)
-                    status = if (trailsOn) "Trails on" else "Trails off"
-                },
-            )
 
             if (showDebug) {
                 DebugPanel(debug = debug, cacheMb = app.cache.usageBytes() / (1024.0 * 1024.0))
@@ -261,14 +226,10 @@ private fun TerrainScreen(
                 onClick = {
                     onRequestLocate {
                         scope.launch {
-                            status = "Locating…"
                             val pos = app.locationFacade.currentPosition(highAccuracy = true)
                             if (pos != null) {
                                 webView?.showUserLocation(pos.latitude, pos.longitude)
                                 webView?.flyTo(pos.latitude, pos.longitude, 2500.0)
-                                status = "Located ${"%.4f".format(pos.latitude)}, ${"%.4f".format(pos.longitude)}"
-                            } else {
-                                status = "Location unavailable"
                             }
                         }
                     }
@@ -332,45 +293,6 @@ private fun SearchBar(
         ),
         shape = RoundedCornerShape(12.dp),
     )
-}
-
-@Composable
-private fun ActivityRow(
-    selected: TrailActivity,
-    trailsOn: Boolean,
-    onSelect: (TrailActivity) -> Unit,
-    onToggleTrails: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Chip(label = if (trailsOn) "Trails on" else "Trails off", selected = trailsOn, onClick = onToggleTrails)
-        TrailActivity.entries.forEach { mode ->
-            Chip(
-                label = mode.name.lowercase().replaceFirstChar { it.titlecase() },
-                selected = selected == mode && trailsOn,
-                onClick = { onSelect(mode) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Surface(
-        color = if (selected) Accent else Panel,
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.clickable(onClick = onClick),
-    ) {
-        Text(
-            text = label,
-            color = if (selected) Deep else Ink,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        )
-    }
 }
 
 @Composable

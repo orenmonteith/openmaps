@@ -218,9 +218,6 @@ app.get("/client/lod", (req, res) => {
 });
 app.get("/imagery/prefetch", (_req, res) => res.json({ ok: true }));
 app.get("/geocode", (_req, res) => res.json({ results: [] }));
-app.get("/trails", (_req, res) =>
-  res.json({ type: "FeatureCollection", features: [] }),
-);
 
 app.get("/terrain/:level/:x/:y.json", async (req, res) => {
   try {
