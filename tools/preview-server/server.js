@@ -65,10 +65,18 @@ function approxRes(level) {
   return Math.max(30, meters / (HEIGHTMAP_SIZE - 1));
 }
 
+function wrapTileX(x, z) {
+  const n = 1 << z;
+  return ((x % n) + n) % n;
+}
+
 async function loadTerrarium(z, x, y) {
-  const key = `${z}/${x}/${y}`;
+  const n = 1 << z;
+  const wx = wrapTileX(x, z);
+  const wy = Math.min(n - 1, Math.max(0, y));
+  const key = `${z}/${wx}/${wy}`;
   if (pngCache.has(key)) return pngCache.get(key);
-  const url = `${TERRARIUM}/${z}/${x}/${y}.png`;
+  const url = `${TERRARIUM}/${z}/${wx}/${wy}.png`;
   const res = await fetch(url, {
     headers: { "User-Agent": "TerrainExplorer-Preview/0.1" },
   });
@@ -114,12 +122,23 @@ async function buildHeights(x, y, level) {
     maxTX = -Infinity,
     minTY = Infinity,
     maxTY = -Infinity;
+  const nMerc = 1 << zoom;
   for (const [lat, lon] of corners) {
-    const [px, py] = latLonToPixel(lat, lon, zoom);
-    minTX = Math.min(minTX, Math.floor(px / 256));
-    maxTX = Math.max(maxTX, Math.floor(px / 256));
-    minTY = Math.min(minTY, Math.floor(py / 256));
-    maxTY = Math.max(maxTY, Math.floor(py / 256));
+    let L = lon;
+    if (L >= 180) L = 179.999999;
+    if (L < -180) L = -180;
+    const [px, py] = latLonToPixel(lat, L, zoom);
+    const tx = Math.min(nMerc - 1, Math.max(0, Math.floor(px / 256)));
+    const ty = Math.min(nMerc - 1, Math.max(0, Math.floor(py / 256)));
+    minTX = Math.min(minTX, tx);
+    maxTX = Math.max(maxTX, tx);
+    minTY = Math.min(minTY, ty);
+    maxTY = Math.max(maxTY, ty);
+  }
+  // Dateline: if the geographic tile spans the antimeridian, prefetch both edges.
+  if (rect.east > 180 || rect.west < -180 || rect.east - rect.west > 180) {
+    minTX = 0;
+    maxTX = nMerc - 1;
   }
   const fetches = [];
   for (let ty = minTY; ty <= maxTY; ty++) {
@@ -133,14 +152,18 @@ async function buildHeights(x, y, level) {
     const lat =
       rect.north - (row / (HEIGHTMAP_SIZE - 1)) * (rect.north - rect.south);
     for (let col = 0; col < HEIGHTMAP_SIZE; col++) {
-      const lon =
+      let lon =
         rect.west + (col / (HEIGHTMAP_SIZE - 1)) * (rect.east - rect.west);
+      // Normalize longitude for dateline-crossing geographic tiles.
+      if (lon > 180) lon -= 360;
+      if (lon < -180) lon += 360;
       const [px, py] = latLonToPixel(lat, lon, zoom);
       const tileX = Math.floor(px / 256);
       const tileY = Math.floor(py / 256);
+      const wx = wrapTileX(tileX, zoom);
       const lx = Math.min(255, Math.max(0, Math.floor(px - tileX * 256)));
       const ly = Math.min(255, Math.max(0, Math.floor(py - tileY * 256)));
-      const png = await loadTerrarium(zoom, tileX, tileY);
+      const png = await loadTerrarium(zoom, wx, tileY);
       heights[row * HEIGHTMAP_SIZE + col] = heightFromPng(png, lx, ly);
     }
   }

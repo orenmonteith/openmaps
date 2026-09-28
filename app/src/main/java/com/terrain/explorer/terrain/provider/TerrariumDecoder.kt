@@ -53,12 +53,20 @@ class TerrariumDecoder(
         var maxTX = Int.MIN_VALUE
         var minTY = Int.MAX_VALUE
         var maxTY = Int.MIN_VALUE
+        val nMerc = 1 shl zoom
         for ((lat, lon) in corners) {
-            val (tx, ty) = WebMercator.tileXY(lat, lon, zoom)
+            var L = lon
+            if (L >= 180.0) L = 179.999999
+            if (L < -180.0) L = -180.0
+            val (tx, ty) = WebMercator.tileXY(lat, L, zoom)
             minTX = minOf(minTX, tx)
             maxTX = maxOf(maxTX, tx)
             minTY = minOf(minTY, ty)
             maxTY = maxOf(maxTY, ty)
+        }
+        if (rect.east > 180.0 || rect.west < -180.0 || rect.east - rect.west > 180.0) {
+            minTX = 0
+            maxTX = nMerc - 1
         }
         coroutineScope {
             val jobs = mutableListOf<kotlinx.coroutines.Deferred<Bitmap?>>()
@@ -100,12 +108,18 @@ class TerrariumDecoder(
     }
 
     private fun sampleHeight(lat: Double, lon: Double, zoom: Int): Float? {
-        val (px, py) = WebMercator.latLonToPixel(lat, lon, zoom)
+        var normalizedLon = lon
+        if (normalizedLon > 180.0) normalizedLon -= 360.0
+        if (normalizedLon < -180.0) normalizedLon += 360.0
+        val (px, py) = WebMercator.latLonToPixel(lat, normalizedLon, zoom)
         val tileX = floor(px / 256.0).toInt()
         val tileY = floor(py / 256.0).toInt()
+        val n = 1 shl zoom
+        val wrappedX = ((tileX % n) + n) % n
+        val clampedY = tileY.coerceIn(0, n - 1)
         val localX = (px - tileX * 256.0).toInt().coerceIn(0, 255)
         val localY = (py - tileY * 256.0).toInt().coerceIn(0, 255)
-        val bmp = loadTile(zoom, tileX, tileY) ?: return null
+        val bmp = loadTile(zoom, wrappedX, clampedY) ?: return null
         if (localX >= bmp.width || localY >= bmp.height) return null
         val pixel = bmp.getPixel(localX, localY)
         val r = (pixel shr 16) and 0xff
@@ -115,12 +129,15 @@ class TerrariumDecoder(
     }
 
     private fun loadTile(z: Int, x: Int, y: Int): Bitmap? {
-        val key = "$z/$x/$y"
+        val n = 1 shl z
+        val wx = ((x % n) + n) % n
+        val wy = y.coerceIn(0, n - 1)
+        val key = "$z/$wx/$wy"
         pngCache[key]?.let { return it }
         val url = tileUrlTemplate
             .replace("{z}", z.toString())
-            .replace("{x}", x.toString())
-            .replace("{y}", y.toString())
+            .replace("{x}", wx.toString())
+            .replace("{y}", wy.toString())
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         return try {
             http.newCall(request).execute().use { response ->

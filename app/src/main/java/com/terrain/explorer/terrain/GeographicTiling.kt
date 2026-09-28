@@ -23,6 +23,8 @@ object GeographicTiling {
     fun rectangle(x: Int, y: Int, level: Int): GeoRectangle {
         val nx = xTiles(level).toDouble()
         val ny = yTiles(level).toDouble()
+        // Keep west/east in sequential space so dateline-spanning tiles keep west < east
+        // in unwrapped coordinates (e.g. 170..190); consumers normalize lon when sampling.
         val west = -180.0 + (x / nx) * 360.0
         val east = -180.0 + ((x + 1) / nx) * 360.0
         val north = 90.0 - (y / ny) * 180.0
