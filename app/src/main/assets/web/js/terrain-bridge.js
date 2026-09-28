@@ -5,6 +5,7 @@
   "use strict";
 
   var MAX_TERRAIN_LEVEL = 11;
+  var activeTerrainLevel = 9;
 
   function tileServerBase() {
     return "http://127.0.0.1:" + (global.TERRAIN_PORT || "8765");
@@ -14,13 +15,19 @@
     return new Float32Array(size * size);
   }
 
+  /** Cap DEM refinement by camera distance — far views skip deep terrain levels. */
+  function setMaxTerrainLevel(level) {
+    var n = typeof level === "number" ? level : 10;
+    activeTerrainLevel = Math.max(5, Math.min(MAX_TERRAIN_LEVEL, n | 0));
+  }
+
   function createLocalTerrainProvider() {
     var size = 65;
     return new Cesium.CustomHeightmapTerrainProvider({
       width: size,
       height: size,
       callback: function (x, y, level) {
-        if (level > MAX_TERRAIN_LEVEL) {
+        if (level > activeTerrainLevel) {
           return undefined;
         }
         var url = tileServerBase() + "/terrain/" + level + "/" + x + "/" + y + ".heights";
@@ -68,6 +75,7 @@
     tileServerBase: tileServerBase,
     createLocalTerrainProvider: createLocalTerrainProvider,
     createLocalImageryProvider: createLocalImageryProvider,
+    setMaxTerrainLevel: setMaxTerrainLevel,
     MAX_TERRAIN_LEVEL: MAX_TERRAIN_LEVEL
   };
 })(window);

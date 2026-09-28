@@ -158,8 +158,8 @@
     // Show ancestors ASAP so holes (blue sky) never open while children load.
     scene.globe.loadingDescendantLimit = 1;
     scene.globe.preloadAncestors = true;
-    scene.globe.preloadSiblings = true;
-    scene.globe.maximumScreenSpaceError = 1.25;
+    scene.globe.preloadSiblings = false;
+    scene.globe.maximumScreenSpaceError = 2.0;
 
     // ONE stable worldwide imagery layer — never tear it down while flying.
     viewer.imageryLayers.removeAll();
@@ -224,50 +224,114 @@
     pollDebug();
   }
 
-  function lodForHeight(height) {
-    // Imagery max Z stays 19 on the provider; lower SSE → sharper child tiles.
-    // resolutionScale is relative to devicePixelRatio (useBrowserRecommendedResolution=false).
+  /** Meters above ground — ellipsoid height is wrong on tall peaks for LOD. */
+  function cameraAgl() {
+    var carto = viewer.camera.positionCartographic;
+    var surface = viewer.scene.globe.getHeight(carto);
+    if (typeof surface !== "number" || isNaN(surface)) {
+      return Math.max(100, carto.height);
+    }
+    return Math.max(40, carto.height - surface);
+  }
+
+  /**
+   * Google Earth-style LOD: razor-sharp only when close to the surface;
+   * zoomed-out / far horizon stays cheap so it cannot starve the near field.
+   */
+  function lodForAgl(agl) {
     var sse;
     var scale = lowPower ? 0.7 : 1.0;
     var imageryZ;
-    if (height > 2.0e6) {
-      sse = 4.0;
+    var terrainLevel;
+    var preloadSiblings;
+    var fogDensity;
+    if (agl > 2.0e5) {
+      // Continent / range overview
+      sse = 8.0;
+      imageryZ = 11;
+      terrainLevel = 6;
+      preloadSiblings = true;
+      fogDensity = 0.00002;
+    } else if (agl > 5.0e4) {
+      sse = 5.0;
       imageryZ = 13;
-    } else if (height > 5.0e5) {
-      sse = 2.4;
+      terrainLevel = 7;
+      preloadSiblings = true;
+      fogDensity = 0.00003;
+    } else if (agl > 1.2e4) {
+      sse = 2.8;
       imageryZ = 15;
-    } else if (height > 1.0e5) {
-      sse = 1.4;
+      terrainLevel = 8;
+      preloadSiblings = true;
+      fogDensity = 0.00004;
+    } else if (agl > 4.0e3) {
+      sse = 1.5;
       imageryZ = 17;
-    } else if (height > 2.5e4) {
-      sse = 0.95;
+      terrainLevel = 9;
+      preloadSiblings = false;
+      fogDensity = 0.00005;
+    } else if (agl > 1.2e3) {
+      // Approach — start sharpening the mountain you're on
+      sse = 0.75;
       imageryZ = 18;
-    } else if (height > 5.0e3) {
-      sse = 0.65;
-      imageryZ = 19;
-      scale = lowPower ? 0.8 : 1.0;
-    } else {
-      sse = 0.45;
-      imageryZ = 19;
+      terrainLevel = 11;
+      preloadSiblings = false;
+      fogDensity = 0.00007;
       scale = lowPower ? 0.85 : 1.0;
+    } else if (agl > 350) {
+      // Ski-scout band — Google Earth-ish clarity on the near face
+      sse = 0.38;
+      imageryZ = 19;
+      terrainLevel = 11;
+      preloadSiblings = false;
+      fogDensity = 0.0001;
+      scale = lowPower ? 0.9 : 1.0;
+    } else {
+      // Super close — max imagery / DEM on what fills the screen
+      sse = 0.22;
+      imageryZ = 19;
+      terrainLevel = 11;
+      preloadSiblings = false;
+      fogDensity = 0.00014;
+      scale = lowPower ? 0.95 : 1.0;
     }
     if (lowPower) {
-      sse = Math.max(sse, 1.8);
+      sse = Math.max(sse, 1.4);
       imageryZ = Math.min(imageryZ, 17);
+      terrainLevel = Math.min(terrainLevel, 9);
     }
-    return { sse: sse, imageryZ: imageryZ, resolutionScale: scale };
+    return {
+      sse: sse,
+      imageryZ: imageryZ,
+      resolutionScale: scale,
+      terrainLevel: terrainLevel,
+      preloadSiblings: preloadSiblings,
+      fogDensity: fogDensity,
+      agl: agl
+    };
+  }
+
+  function applyLod(lod) {
+    var globe = viewer.scene.globe;
+    if (globe.maximumScreenSpaceError !== lod.sse) {
+      globe.maximumScreenSpaceError = lod.sse;
+    }
+    if (globe.preloadSiblings !== lod.preloadSiblings) {
+      globe.preloadSiblings = lod.preloadSiblings;
+    }
+    viewer.scene.fog.density = lod.fogDensity;
+    if (Math.abs(viewer.resolutionScale - lod.resolutionScale) > 0.01) {
+      viewer.resolutionScale = lod.resolutionScale;
+    }
+    if (TerrainBridge.setMaxTerrainLevel) {
+      TerrainBridge.setMaxTerrainLevel(lod.terrainLevel);
+    }
   }
 
   function updateLod(force) {
     if (!viewer) return;
-    var height = viewer.camera.positionCartographic.height;
-    var lod = lodForHeight(height);
-    if (viewer.scene.globe.maximumScreenSpaceError !== lod.sse) {
-      viewer.scene.globe.maximumScreenSpaceError = lod.sse;
-    }
-    if (Math.abs(viewer.resolutionScale - lod.resolutionScale) > 0.01) {
-      viewer.resolutionScale = lod.resolutionScale;
-    }
+    var lod = lodForAgl(cameraAgl());
+    applyLod(lod);
     lastLod = lod;
     scheduleLodReport();
     if (force) viewer.scene.requestRender();
@@ -293,21 +357,25 @@
     if (settleTimer) clearTimeout(settleTimer);
     settleTimer = setTimeout(function () {
       if (!viewer || lowPower) return;
-      var height = viewer.camera.positionCartographic.height;
-      // After the camera settles, demand sharper tiles across the whole frustum.
-      if (height < 150000) {
-        var sharp = Math.max(0.4, lodForHeight(height).sse * 0.55);
+      var agl = cameraAgl();
+      var lod = lodForAgl(agl);
+      // Settled + close → squeeze SSE harder so z18/z19 imagery fills the near face.
+      if (agl < 8000) {
+        var sharp = Math.max(0.18, lod.sse * 0.7);
+        if (agl < 800) sharp = Math.min(sharp, 0.2);
+        else if (agl < 2000) sharp = Math.min(sharp, 0.3);
         if (viewer.scene.globe.maximumScreenSpaceError > sharp) {
           viewer.scene.globe.maximumScreenSpaceError = sharp;
           lastLod.sse = sharp;
           viewer.scene.requestRender();
         }
       }
-      if (height > 80000) return;
+      // Only prefetch high-z when we're actually close — never for the far horizon.
+      if (agl > 10000) return;
       var c = viewer.camera.positionCartographic;
       var lat = Cesium.Math.toDegrees(c.latitude);
       var lon = Cesium.Math.toDegrees(c.longitude);
-      var z = Math.min(19, Math.max(lastLod.imageryZ, height < 12000 ? 19 : 18));
+      var z = agl < 1500 ? 19 : agl < 4000 ? 18 : 16;
       fetch(
         TerrainBridge.tileServerBase() +
           "/imagery/prefetch?lat=" +
@@ -317,7 +385,7 @@
           "&z=" +
           z
       ).catch(function () {});
-    }, 350);
+    }, 300);
   }
 
   function bindDynamicLod() {
