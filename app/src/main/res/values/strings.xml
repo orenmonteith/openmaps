@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Terrain Explorer</string>
+    <string name="locate_me">Locate me</string>
+    <string name="toggle_debug">Debug</string>
+    <string name="reset_north">North</string>
+    <string name="attribution">Elevation &amp; imagery: see docs/DEM_LICENSES.md</string>
+</resources>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Terrain Explorer</title>
+  <link rel="stylesheet" href="cesium/Widgets/widgets.css" />
+  <link rel="stylesheet" href="css/app.css" />
+  <script src="cesium/Cesium.js"></script>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <script>
+    window.TERRAIN_PORT = (function () {
+      var m = /[?&]port=(\d+)/.exec(location.search || "");
+      if (m) return m[1];
+      if (location.port) return location.port;
+      return "8765";
+    })();
+    window.CESIUM_BASE_URL = "cesium/";
+  </script>
+  <script src="js/terrain-bridge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
