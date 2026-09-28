@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,7 @@ import com.terrain.explorer.terrain.model.TerrainDebugInfo
 import com.terrain.explorer.ui.TerrainWebView
 import com.terrain.explorer.ui.flyTo
 import com.terrain.explorer.ui.resetNorth
+import com.terrain.explorer.ui.scoutView
 import com.terrain.explorer.ui.showUserLocation
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -216,6 +218,13 @@ private fun TerrainScreen(
                 Icon(Icons.Default.Info, contentDescription = "Toggle debug")
             }
             FloatingActionButton(
+                onClick = { webView?.scoutView() },
+                containerColor = Panel,
+                contentColor = Ink,
+            ) {
+                Icon(Icons.Default.Terrain, contentDescription = "Scout view")
+            }
+            FloatingActionButton(
                 onClick = { webView?.resetNorth() },
                 containerColor = Panel,
                 contentColor = Ink,
@@ -229,7 +238,8 @@ private fun TerrainScreen(
                             val pos = app.locationFacade.currentPosition(highAccuracy = true)
                             if (pos != null) {
                                 webView?.showUserLocation(pos.latitude, pos.longitude)
-                                webView?.flyTo(pos.latitude, pos.longitude, 2500.0)
+                                // Close scout altitude for reading nearby lines.
+                                webView?.flyTo(pos.latitude, pos.longitude, 1800.0)
                             }
                         }
                     }
@@ -253,18 +263,24 @@ private fun TerrainScreen(
     }
 }
 
-/** Mountain ranges / countries need more altitude so draped imagery can fill the view. */
+/** Search fly heights biased for ski / mountain scouting, not continent overview. */
 private fun flyHeightForPlace(name: String): Double {
     val n = name.lowercase()
     return when {
+        listOf(
+            "ski", "resort", "glacier", "couloir", "bowl", "pass", "col ",
+            "backcountry", "hut", "lodge", "piste",
+        ).any { it in n } -> 2400.0
+        listOf("peak", "mount ", "mountain", "berg", "horn", "spitze", "aiguille")
+            .any { it in n } -> 3200.0
         listOf("alps", "himalaya", "andes", "rockies", "pyrenees", "cascade", "range")
-            .any { it in n } -> 45000.0
+            .any { it in n } -> 22000.0
         listOf("ocean", "sea", "desert", "continent", "country", "republic", "kingdom")
             .any { it in n } -> 120000.0
-        listOf("national park", "park", "forest", "mountain", "peak", "mount ")
-            .any { it in n } -> 18000.0
-        else -> 8000.0
-    }.let { max(it, 2500.0) }
+        listOf("national park", "park", "forest")
+            .any { it in n } -> 9000.0
+        else -> 3500.0
+    }.let { max(it, 900.0) }
 }
 
 @Composable
@@ -278,7 +294,7 @@ private fun SearchBar(
         onValueChange = onQueryChange,
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
-        placeholder = { Text("Search places", color = Ink.copy(alpha = 0.5f)) },
+        placeholder = { Text("Search peaks, resorts, ranges", color = Ink.copy(alpha = 0.5f)) },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Accent) },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { onSearch() }),

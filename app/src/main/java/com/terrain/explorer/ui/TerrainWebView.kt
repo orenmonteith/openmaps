@@ -125,3 +125,7 @@ fun WebView.showUserLocation(lat: Double, lon: Double) {
 fun WebView.resetNorth() {
     evaluateJavascript("window.TerrainApp && window.TerrainApp.resetNorth();", null)
 }
+
+fun WebView.scoutView() {
+    evaluateJavascript("window.TerrainApp && window.TerrainApp.scoutView();", null)
+}

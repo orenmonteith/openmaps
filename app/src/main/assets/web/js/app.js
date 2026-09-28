@@ -138,11 +138,18 @@
     scene.globe.baseColor = earth;
     scene.globe.showGroundAtmosphere = false;
     scene.globe.depthTestAgainstTerrain = true;
-    scene.globe.terrainExaggeration = 1.0;
+    // Mild vertical relief so couloirs / fall lines read when scouting.
+    scene.globe.terrainExaggeration = 1.45;
     scene.fog.enabled = true;
-    scene.fog.density = 0.00012;
+    scene.fog.density = 0.000035;
+    scene.fog.minimumBrightness = 0.45;
     scene.skyAtmosphere.show = true;
-    scene.globe.enableLighting = false;
+    // Winter-sun shading makes aspect and slope pop without burying snow detail.
+    scene.globe.enableLighting = true;
+    scene.globe.dynamicAtmosphereLighting = true;
+    scene.globe.atmosphereLightIntensity = 8.0;
+    viewer.clock.currentTime = Cesium.JulianDate.fromIso8601("2024-02-10T14:30:00Z");
+    viewer.clock.shouldAnimate = false;
     // FXAA softens draped satellite — keep off for crisp imagery.
     scene.fxaa = false;
     scene.postProcessStages.fxaa.enabled = false;
@@ -159,11 +166,11 @@
     imageryLayer = viewer.imageryLayers.addImageryProvider(
       TerrainBridge.createLocalImageryProvider(19)
     );
-    // Keep color grading neutral — contrast/gamma exaggerate Esri tile seams.
-    imageryLayer.brightness = 1.0;
-    imageryLayer.contrast = 1.0;
-    imageryLayer.saturation = 1.0;
-    imageryLayer.gamma = 1.0;
+    // Slight lift for snow / rock separation while scouting lines.
+    imageryLayer.brightness = 1.06;
+    imageryLayer.contrast = 1.05;
+    imageryLayer.saturation = 0.95;
+    imageryLayer.gamma = 0.96;
 
     scene.globe.imageryLayersUpdatedEvent.addEventListener(function () {
       viewer.scene.requestRender();
@@ -173,17 +180,20 @@
     });
 
     var controller = scene.screenSpaceCameraController;
-    controller.zoomFactor = 14.0;
-    controller.minimumZoomDistance = 80.0;
+    controller.zoomFactor = 12.0;
+    controller.minimumZoomDistance = 35.0;
     controller.maximumZoomDistance = 4.0e7;
-    controller.inertiaZoom = 0.75;
+    controller.inertiaZoom = 0.7;
+    controller.inertiaSpin = 0.85;
+    controller.inertiaTranslate = 0.85;
     controller.enableCollisionDetection = true;
 
+    // Oblique scout angle — fall lines read better than nadir.
     viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(-71.3036, 44.2706, 18000),
+      destination: Cesium.Cartesian3.fromDegrees(-71.3036, 44.2706, 4200),
       orientation: {
-        heading: Cesium.Math.toRadians(20),
-        pitch: Cesium.Math.toRadians(-35),
+        heading: Cesium.Math.toRadians(35),
+        pitch: Cesium.Math.toRadians(-42),
         roll: 0
       }
     });
@@ -360,15 +370,37 @@
   global.TerrainApp = {
     flyTo: function (lat, lon, height) {
       if (!viewer) return;
-      height = height || 12000;
+      // Default into a ski-scout band: close enough for lines, high enough for context.
+      height = height || 3200;
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
         orientation: {
-          heading: 0,
-          pitch: Cesium.Math.toRadians(-45),
+          heading: Cesium.Math.toRadians(28),
+          pitch: Cesium.Math.toRadians(-40),
           roll: 0
         },
         duration: 2.0,
+        complete: function () {
+          updateLod(true);
+          scheduleSettle();
+          viewer.scene.requestRender();
+        }
+      });
+    },
+    /** Re-pitch current view for fall-line / ridge scouting. */
+    scoutView: function () {
+      if (!viewer) return;
+      var cam = viewer.camera;
+      var c = cam.positionCartographic;
+      var h = Math.max(400, Math.min(c.height, 8000));
+      cam.flyTo({
+        destination: Cesium.Cartesian3.fromRadians(c.longitude, c.latitude, h),
+        orientation: {
+          heading: cam.heading + Cesium.Math.toRadians(25),
+          pitch: Cesium.Math.toRadians(-38),
+          roll: 0
+        },
+        duration: 0.7,
         complete: function () {
           updateLod(true);
           scheduleSettle();
@@ -389,11 +421,17 @@
         destination: cam.positionWC,
         orientation: {
           heading: 0,
-          pitch: cam.pitch,
+          pitch: Cesium.Math.toRadians(-40),
           roll: 0
         },
         duration: 0.5
       });
+    },
+    setTerrainExaggeration: function (amount) {
+      if (!viewer) return;
+      viewer.scene.globe.terrainExaggeration =
+        typeof amount === "number" ? Math.max(1, Math.min(amount, 2.5)) : 1.45;
+      viewer.scene.requestRender();
     },
     pause: function () {
       if (!viewer) return;
