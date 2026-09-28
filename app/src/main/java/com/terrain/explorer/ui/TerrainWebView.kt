@@ -44,7 +44,7 @@ fun TerrainWebView(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                setBackgroundColor(Color.parseColor("#0B1C24"))
+                setBackgroundColor(Color.parseColor("#1A2420"))
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.allowFileAccess = true

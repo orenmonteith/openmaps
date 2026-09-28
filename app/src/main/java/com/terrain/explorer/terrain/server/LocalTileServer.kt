@@ -14,6 +14,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -36,9 +37,27 @@ class LocalTileServer(
     private val lastImageryZ = AtomicInteger(-1)
     private val lastSse = AtomicReference("—")
     private val lastResolutionScale = AtomicReference("1.0")
+    private val requestPool = Executors.newFixedThreadPool(24)
 
     val boundPort: Int
         get() = listeningPort
+
+    init {
+        // Cesium fans out dozens of tile requests; keep a wide pool so Alps/world fly-tos fill.
+        setAsyncRunner(object : AsyncRunner {
+            override fun exec(code: ClientHandler) {
+                requestPool.execute(code)
+            }
+
+            override fun closed(clientHandler: ClientHandler) {
+                // no-op — pool threads are reused
+            }
+
+            override fun closeAll() {
+                // Handlers finish on their own; pool shut down in [shutdown].
+            }
+        })
+    }
 
     fun ensureStarted() {
         if (started.compareAndSet(false, true)) {
@@ -54,6 +73,7 @@ class LocalTileServer(
     fun shutdown() {
         imageryPrefetcher.shutdown()
         stop()
+        requestPool.shutdownNow()
         started.set(false)
     }
 
@@ -242,13 +262,25 @@ class LocalTileServer(
         val y = parts[2].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad y")
         lastImageryZ.set(z)
         val bytes = runBlocking { imageryProvider.getTile(z, x, y) }
-            ?: return text(Response.Status.NOT_FOUND, "no imagery")
+        if (bytes == null) {
+            // Never let WebView cache misses — that left regions stuck on bare globe color.
+            return text(Response.Status.NOT_FOUND, "no imagery").also {
+                it.addHeader("Cache-Control", "no-store")
+            }
+        }
+        val mime = when {
+            bytes.size >= 2 && (bytes[0].toInt() and 0xff) == 0x89 -> "image/png"
+            else -> "image/jpeg"
+        }
         return newFixedLengthResponse(
             Response.Status.OK,
-            "image/jpeg",
+            mime,
             ByteArrayInputStream(bytes),
             bytes.size.toLong(),
-        ).also { addCors(it) }
+        ).also {
+            addCors(it)
+            it.addHeader("Cache-Control", "public, max-age=86400")
+        }
     }
 
     private fun parseTerrain(uri: String, suffix: String): Triple<Int, Int, Int>? {
@@ -270,6 +302,5 @@ class LocalTileServer(
         response.addHeader("Access-Control-Allow-Origin", "*")
         response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         response.addHeader("Access-Control-Allow-Headers", "*")
-        response.addHeader("Cache-Control", "public, max-age=3600")
     }
 }

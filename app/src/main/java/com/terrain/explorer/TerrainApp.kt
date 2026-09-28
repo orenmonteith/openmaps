@@ -44,8 +44,8 @@ class TerrainApp : Application() {
         terrainRepository = TerrainRepository(cache, selector)
         imagerySelector = ImageryProviderSelector(
             listOf(
-                UsgsImageryProvider(cache),
-                EsriWorldImageryProvider(cache),
+                EsriWorldImageryProvider(cache), // worldwide baseline first
+                UsgsImageryProvider(cache), // US high-z upgrade only
             ),
         )
         imageryProvider = imagerySelector

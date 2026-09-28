@@ -7,6 +7,7 @@ import com.terrain.explorer.terrain.model.TileKey
 import com.terrain.explorer.terrain.provider.TerrariumDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -104,13 +105,32 @@ class ImageryProviderSelector(
 
     override suspend fun getTile(z: Int, x: Int, y: Int): ByteArray? {
         val (lat, lon) = tileCenter(z, x, y)
+        // Esri first for reliable worldwide coverage; regional providers only as upgrades.
         val ranked = providers
             .filter { it.getCoverage().contains(lat, lon) && z <= it.maxZoom }
-            .sortedByDescending { it.priority }
+            .sortedWith(
+                compareBy<ImageryProvider> {
+                    when {
+                        it.id == EsriWorldImageryProvider.ID -> 0
+                        z >= 16 -> 1
+                        else -> 2
+                    }
+                }.thenByDescending { it.priority },
+            )
         for (provider in ranked) {
+            if (provider.id != EsriWorldImageryProvider.ID && z < 16) continue
             val bytes = runCatching { provider.getTile(z, x, y) }.getOrNull()
-            if (bytes != null) {
+            if (bytes != null && isImageBytes(bytes)) {
                 lastSourceId = provider.id
+                return bytes
+            }
+        }
+        // Last resort: always try Esri even if coverage filter was wrong.
+        val esri = providers.firstOrNull { it.id == EsriWorldImageryProvider.ID }
+        if (esri != null && z <= esri.maxZoom) {
+            val bytes = runCatching { esri.getTile(z, x, y) }.getOrNull()
+            if (bytes != null && isImageBytes(bytes)) {
+                lastSourceId = esri.id
                 return bytes
             }
         }
@@ -119,12 +139,31 @@ class ImageryProviderSelector(
     }
 }
 
+private val sharedDispatcher: Dispatcher = Dispatcher().apply {
+    maxRequests = 64
+    maxRequestsPerHost = 32
+}
+
 internal fun defaultHttp(): OkHttpClient =
     OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .dispatcher(sharedDispatcher)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
+
+internal fun isImageBytes(bytes: ByteArray): Boolean {
+    if (bytes.size < 4) return false
+    val b0 = bytes[0].toInt() and 0xff
+    val b1 = bytes[1].toInt() and 0xff
+    // JPEG
+    if (b0 == 0xff && b1 == 0xd8) return true
+    // PNG
+    if (b0 == 0x89 && b1 == 0x50) return true
+    // WebP (RIFF)
+    if (b0 == 0x52 && b1 == 0x49) return true
+    return false
+}
 
 internal suspend fun fetchCached(
     cache: GeoLodDiskCache,
@@ -137,7 +176,9 @@ internal suspend fun fetchCached(
     yxOrder: Boolean,
 ): ByteArray? {
     val key = TileKey("imagery", providerId, z, x, y)
-    cache.getBytes(key)?.let { return it }
+    cache.getBytes(key)?.let { cached ->
+        if (isImageBytes(cached)) return cached
+    }
     val url = if (yxOrder) {
         urlTemplate
             .replace("{z}", z.toString())
@@ -153,10 +194,12 @@ internal suspend fun fetchCached(
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", TerrariumDecoder.USER_AGENT)
+            .header("Accept", "image/jpeg,image/png,image/*;q=0.8")
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
             val bytes = response.body?.bytes() ?: return null
+            if (!isImageBytes(bytes) || bytes.size < 256) return null
             cache.putBytes(key, bytes)
             bytes
         }

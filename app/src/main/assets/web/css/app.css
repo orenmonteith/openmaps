@@ -4,7 +4,7 @@ html, body, #cesiumContainer {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: #0B1C24;
+  background: #1a2420;
   touch-action: none;
 }
 

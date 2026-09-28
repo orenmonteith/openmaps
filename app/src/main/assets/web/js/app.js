@@ -1,25 +1,20 @@
 /**
- * OpenMaps Cesium viewer: LOD imagery, GPS on mesh, trails, battery-aware rendering.
+ * OpenMaps Cesium viewer — stable worldwide imagery, performance-first LOD.
  */
 (function (global) {
   "use strict";
 
   var viewer = null;
   var imageryLayer = null;
-  var currentImageryMaxZ = -1;
   var lowPower = false;
   var interactTimer = null;
   var settleTimer = null;
+  var lodReportTimer = null;
   var userEntity = null;
   var trailsDataSource = null;
-  var trailsEnabled = true;
+  var trailsEnabled = false;
   var trailActivity = "HIKE";
-  var lastLod = {
-    imageryZ: -1,
-    sse: 6,
-    resolutionScale: 1,
-    imagerySource: "—"
-  };
+  var lastLod = { imageryZ: 19, sse: 4, resolutionScale: 1 };
 
   function init() {
     if (!global.Cesium || !global.TerrainBridge) {
@@ -48,41 +43,61 @@
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
       targetFrameRate: 30,
-      msaaSamples: 1
+      msaaSamples: 1,
+      contextOptions: {
+        webgl: {
+          alpha: false,
+          antialias: true,
+          powerPreference: "high-performance"
+        }
+      }
     });
 
-    viewer.imageryLayers.removeAll();
-    setImageryMaxLevel(14);
-
     var scene = viewer.scene;
+    // Match UI chrome — never flash Cesium's default blue clear/sky through gaps.
+    var earth = Cesium.Color.fromCssColorString("#1a2420");
+    scene.backgroundColor = earth;
+    scene.globe.baseColor = earth;
+    scene.globe.showGroundAtmosphere = false;
     scene.globe.depthTestAgainstTerrain = true;
     scene.globe.terrainExaggeration = 1.0;
     scene.fog.enabled = true;
+    scene.fog.density = 0.00012;
     scene.skyAtmosphere.show = true;
     scene.globe.enableLighting = false;
-    scene.fxaa = false;
-    scene.postProcessStages.fxaa.enabled = false;
+    scene.fxaa = true;
+    scene.postProcessStages.fxaa.enabled = true;
     scene.highDynamicRange = false;
-    scene.globe.tileCacheSize = 140;
-    scene.globe.loadingDescendantLimit = 2;
+    scene.globe.tileCacheSize = 300;
+    // Show ancestors ASAP so holes (blue sky) never open while children load.
+    scene.globe.loadingDescendantLimit = 1;
     scene.globe.preloadAncestors = true;
-    scene.globe.preloadSiblings = false;
-    scene.globe.maximumScreenSpaceError = 6.0;
+    scene.globe.preloadSiblings = true;
+    scene.globe.maximumScreenSpaceError = 3.0;
 
-    var controller = scene.screenSpaceCameraController;
-    controller.zoomFactor = 14.0;
-    controller.minimumZoomDistance = 60.0;
-    controller.maximumZoomDistance = 4.0e7;
-    controller.inertiaZoom = 0.8;
-    controller.enableCollisionDetection = true;
+    // ONE stable worldwide imagery layer — never tear it down while flying.
+    viewer.imageryLayers.removeAll();
+    imageryLayer = viewer.imageryLayers.addImageryProvider(
+      TerrainBridge.createLocalImageryProvider(19)
+    );
+    imageryLayer.brightness = 1.02;
+    imageryLayer.contrast = 1.04;
+    imageryLayer.saturation = 1.02;
+    imageryLayer.gamma = 0.95;
 
-    // Refresh render when imagery tiles arrive (swap blurry parents faster).
-    viewer.imageryLayers.layerAdded.addEventListener(function () {
-      viewer.scene.requestRender();
-    });
     scene.globe.imageryLayersUpdatedEvent.addEventListener(function () {
       viewer.scene.requestRender();
     });
+    scene.globe.tileLoadProgressEvent.addEventListener(function () {
+      viewer.scene.requestRender();
+    });
+
+    var controller = scene.screenSpaceCameraController;
+    controller.zoomFactor = 14.0;
+    controller.minimumZoomDistance = 80.0;
+    controller.maximumZoomDistance = 4.0e7;
+    controller.inertiaZoom = 0.75;
+    controller.enableCollisionDetection = true;
 
     viewer.camera.setView({
       destination: Cesium.Cartesian3.fromDegrees(-71.3036, 44.2706, 18000),
@@ -122,47 +137,37 @@
     pollDebug();
   }
 
-  function setImageryMaxLevel(maxZ) {
-    if (!viewer) return;
-    if (currentImageryMaxZ === maxZ) return;
-    currentImageryMaxZ = maxZ;
-    if (imageryLayer) {
-      viewer.imageryLayers.remove(imageryLayer, false);
-    }
-    var provider = TerrainBridge.createLocalImageryProvider(maxZ);
-    imageryLayer = viewer.imageryLayers.addImageryProvider(provider);
-    // Bias toward sharper children when available.
-    imageryLayer.brightness = 1.02;
-    imageryLayer.contrast = 1.05;
-    viewer.scene.requestRender();
-  }
-
   function lodForHeight(height) {
+    // Imagery max Z stays 19 on the provider; SSE decides how hard Cesium works.
     var sse;
+    var scale = lowPower ? 0.85 : 1.0;
     var imageryZ;
-    var scale = lowPower ? 0.75 : 1.0;
     if (height > 2.0e6) {
-      sse = 10.0;
-      imageryZ = lowPower ? 12 : 13;
-    } else if (height > 4.0e5) {
       sse = 7.0;
-      imageryZ = lowPower ? 13 : 14;
-    } else if (height > 8.0e4) {
+      imageryZ = 12;
+    } else if (height > 5.0e5) {
       sse = 4.5;
-      imageryZ = lowPower ? 14 : 16;
-    } else if (height > 1.5e4) {
-      sse = 2.4;
-      imageryZ = lowPower ? 15 : 17;
-    } else if (height > 3.0e3) {
-      sse = 1.6;
-      imageryZ = lowPower ? 16 : 18;
-      scale = lowPower ? 0.8 : 1.0;
+      imageryZ = 14;
+    } else if (height > 1.0e5) {
+      sse = 2.8;
+      imageryZ = 16;
+    } else if (height > 2.0e4) {
+      sse = 1.8;
+      imageryZ = 17;
+    } else if (height > 4.0e3) {
+      sse = 1.2;
+      imageryZ = 18;
+      scale = lowPower ? 0.9 : 1.0;
     } else {
-      sse = 1.15;
-      imageryZ = lowPower ? 17 : 19;
-      scale = lowPower ? 0.85 : 1.0;
+      sse = 0.9;
+      imageryZ = 19;
+      scale = lowPower ? 0.95 : 1.0;
     }
-    return { sse: sse, imageryZ: imageryZ, scale: scale };
+    if (lowPower) {
+      sse = Math.max(sse, 2.2);
+      imageryZ = Math.min(imageryZ, 17);
+    }
+    return { sse: sse, imageryZ: imageryZ, resolutionScale: scale };
   }
 
   function updateLod(force) {
@@ -172,38 +177,49 @@
     if (viewer.scene.globe.maximumScreenSpaceError !== lod.sse) {
       viewer.scene.globe.maximumScreenSpaceError = lod.sse;
     }
-    if (viewer.resolutionScale !== lod.scale) {
-      viewer.resolutionScale = lod.scale;
+    if (Math.abs(viewer.resolutionScale - lod.resolutionScale) > 0.01) {
+      viewer.resolutionScale = lod.resolutionScale;
     }
-    setImageryMaxLevel(lod.imageryZ);
-    lastLod.imageryZ = lod.imageryZ;
-    lastLod.sse = lod.sse;
-    lastLod.resolutionScale = lod.scale;
-    reportClientLod();
+    lastLod = lod;
+    scheduleLodReport();
     if (force) viewer.scene.requestRender();
   }
 
-  function reportClientLod() {
-    var url =
-      TerrainBridge.tileServerBase() +
-      "/client/lod?imageryZ=" +
-      encodeURIComponent(lastLod.imageryZ) +
-      "&sse=" +
-      encodeURIComponent(lastLod.sse) +
-      "&resolutionScale=" +
-      encodeURIComponent(lastLod.resolutionScale);
-    fetch(url).catch(function () {});
+  function scheduleLodReport() {
+    if (lodReportTimer) return;
+    lodReportTimer = setTimeout(function () {
+      lodReportTimer = null;
+      fetch(
+        TerrainBridge.tileServerBase() +
+          "/client/lod?imageryZ=" +
+          encodeURIComponent(lastLod.imageryZ) +
+          "&sse=" +
+          encodeURIComponent(lastLod.sse) +
+          "&resolutionScale=" +
+          encodeURIComponent(lastLod.resolutionScale)
+      ).catch(function () {});
+    }, 500);
   }
 
-  function schedulePrefetch() {
+  function scheduleSettle() {
     if (settleTimer) clearTimeout(settleTimer);
     settleTimer = setTimeout(function () {
       if (!viewer || lowPower) return;
+      var height = viewer.camera.positionCartographic.height;
+      // After the camera settles, pull a sharper frame without thrashing mid-gesture.
+      if (height < 80000) {
+        var sharp = Math.max(0.75, lodForHeight(height).sse * 0.75);
+        if (viewer.scene.globe.maximumScreenSpaceError > sharp) {
+          viewer.scene.globe.maximumScreenSpaceError = sharp;
+          lastLod.sse = sharp;
+          viewer.scene.requestRender();
+        }
+      }
+      if (height > 30000) return;
       var c = viewer.camera.positionCartographic;
       var lat = Cesium.Math.toDegrees(c.latitude);
       var lon = Cesium.Math.toDegrees(c.longitude);
-      var z = lastLod.imageryZ;
-      if (z < 14) return;
+      var z = Math.min(19, lastLod.imageryZ);
       fetch(
         TerrainBridge.tileServerBase() +
           "/imagery/prefetch?lat=" +
@@ -213,17 +229,18 @@
           "&z=" +
           z
       ).catch(function () {});
-      if (trailsEnabled) {
-        refreshTrails();
-      }
     }, 700);
   }
 
   function bindDynamicLod() {
     viewer.camera.changed.addEventListener(function () {
       updateLod(false);
-      schedulePrefetch();
+      scheduleSettle();
       viewer.scene.requestRender();
+    });
+    viewer.camera.moveEnd.addEventListener(function () {
+      updateLod(true);
+      scheduleSettle();
     });
   }
 
@@ -234,8 +251,8 @@
       viewer.scene.requestRender();
       if (interactTimer) clearTimeout(interactTimer);
       interactTimer = setTimeout(function () {
-        viewer.targetFrameRate = 8;
-      }, 800);
+        viewer.targetFrameRate = 12;
+      }, 900);
     }
     ["pointerdown", "pointermove", "wheel", "touchstart", "touchmove"].forEach(function (evt) {
       canvas.addEventListener(evt, bump, { passive: true });
@@ -247,21 +264,22 @@
     for (var i = 0; i < entities.length; i++) {
       var e = entities[i];
       if (e.polyline) {
-        e.polyline.width = 3;
+        e.polyline.width = 2.5;
         e.polyline.clampToGround = true;
-        e.polyline.material = Cesium.Color.fromCssColorString("#FFB020").withAlpha(0.9);
+        e.polyline.material = Cesium.Color.fromCssColorString("#FFB020").withAlpha(0.85);
       }
     }
   }
 
   function refreshTrails() {
-    if (!viewer || !trailsDataSource) return;
+    if (!viewer || !trailsDataSource || !trailsEnabled) return;
     var rect = viewer.camera.computeViewRectangle();
     if (!rect) return;
     var south = Cesium.Math.toDegrees(rect.south);
     var west = Cesium.Math.toDegrees(rect.west);
     var north = Cesium.Math.toDegrees(rect.north);
     var east = Cesium.Math.toDegrees(rect.east);
+    if (north - south > 0.45 || east - west > 0.45) return;
     var url =
       TerrainBridge.tileServerBase() +
       "/trails?south=" +
@@ -277,7 +295,7 @@
     Cesium.GeoJsonDataSource.load(url, {
       clampToGround: true,
       stroke: Cesium.Color.fromCssColorString("#FFB020"),
-      strokeWidth: 3
+      strokeWidth: 2.5
     })
       .then(function (ds) {
         trailsDataSource.entities.removeAll();
@@ -307,22 +325,27 @@
       })
       .catch(function () {})
       .finally(function () {
-        setTimeout(pollDebug, 2000);
+        setTimeout(pollDebug, 2500);
       });
   }
 
   global.TerrainApp = {
     flyTo: function (lat, lon, height) {
       if (!viewer) return;
-      height = height || 8000;
+      height = height || 12000;
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
         orientation: {
           heading: 0,
-          pitch: Cesium.Math.toRadians(-40),
+          pitch: Cesium.Math.toRadians(-45),
           roll: 0
         },
-        duration: 1.6
+        duration: 2.0,
+        complete: function () {
+          updateLod(true);
+          scheduleSettle();
+          viewer.scene.requestRender();
+        }
       });
     },
     showUserLocation: function (lat, lon) {
@@ -336,7 +359,7 @@
       if (!trailsEnabled && trailsDataSource) {
         trailsDataSource.entities.removeAll();
         viewer.scene.requestRender();
-      } else {
+      } else if (trailsEnabled) {
         refreshTrails();
       }
     },
@@ -355,7 +378,7 @@
           pitch: cam.pitch,
           roll: 0
         },
-        duration: 0.6
+        duration: 0.5
       });
     },
     pause: function () {

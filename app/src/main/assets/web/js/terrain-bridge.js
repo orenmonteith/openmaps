@@ -54,7 +54,12 @@
     return new Cesium.UrlTemplateImageryProvider({
       url: tileServerBase() + "/imagery/{z}/{x}/{y}.jpg",
       tilingScheme: new Cesium.WebMercatorTilingScheme(),
+      minimumLevel: 0,
       maximumLevel: maxZ,
+      tileWidth: 256,
+      tileHeight: 256,
+      hasAlphaChannel: false,
+      enablePickFeatures: false,
       credit: "Satellite imagery"
     });
   }

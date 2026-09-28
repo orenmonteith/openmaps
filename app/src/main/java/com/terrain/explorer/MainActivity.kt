@@ -45,7 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -61,6 +60,7 @@ import com.terrain.explorer.ui.setTrailActivity
 import com.terrain.explorer.ui.setTrailsEnabled
 import com.terrain.explorer.ui.showUserLocation
 import kotlinx.coroutines.launch
+import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
 
@@ -140,20 +140,19 @@ private fun TerrainScreen(
     onRequestLocate: (locate: () -> Unit) -> Unit,
 ) {
     var debug by remember { mutableStateOf(TerrainDebugInfo()) }
-    var showDebug by remember { mutableStateOf(true) }
+    var showDebug by remember { mutableStateOf(false) }
     var engineReady by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Starting OpenMaps…") }
+    var status by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
-    var trailsOn by remember { mutableStateOf(true) }
+    var trailsOn by remember { mutableStateOf(false) }
     var activity by remember { mutableStateOf(TrailActivity.HIKE) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(engineReady) {
         if (engineReady) {
-            status = "Worldwide 3D terrain"
-            webView?.setTrailsEnabled(trailsOn)
+            webView?.setTrailsEnabled(false)
             webView?.setTrailActivity(activity.name)
         }
     }
@@ -176,23 +175,9 @@ private fun TerrainScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = "OpenMaps",
-                color = Ink,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Serif,
-                letterSpacing = 0.5.sp,
-            )
-            Text(
-                text = status,
-                color = Ink.copy(alpha = 0.8f),
-                fontSize = 14.sp,
-            )
-
             SearchBar(
                 query = query,
                 onQueryChange = { query = it },
@@ -216,7 +201,11 @@ private fun TerrainScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        webView?.flyTo(r.latitude, r.longitude, 6000.0)
+                                        webView?.flyTo(
+                                            r.latitude,
+                                            r.longitude,
+                                            flyHeightForPlace(r.displayName),
+                                        )
                                         results = emptyList()
                                         status = r.displayName
                                     }
@@ -301,6 +290,20 @@ private fun TerrainScreen(
                 .fillMaxWidth(0.7f),
         )
     }
+}
+
+/** Mountain ranges / countries need more altitude so draped imagery can fill the view. */
+private fun flyHeightForPlace(name: String): Double {
+    val n = name.lowercase()
+    return when {
+        listOf("alps", "himalaya", "andes", "rockies", "pyrenees", "cascade", "range")
+            .any { it in n } -> 45000.0
+        listOf("ocean", "sea", "desert", "continent", "country", "republic", "kingdom")
+            .any { it in n } -> 120000.0
+        listOf("national park", "park", "forest", "mountain", "peak", "mount ")
+            .any { it in n } -> 18000.0
+        else -> 8000.0
+    }.let { max(it, 2500.0) }
 }
 
 @Composable

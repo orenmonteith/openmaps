@@ -35,23 +35,24 @@ class ImageryPrefetcher(
      */
     fun prefetchAround(lat: Double, lon: Double, targetZ: Int, radius: Int = 1) {
         if (!enabled.get()) return
-        val z = targetZ.coerceIn(10, imagery.maxZoom)
+        val z = targetZ.coerceIn(8, imagery.maxZoom)
         job?.cancel()
         job = scope.launch(Dispatchers.IO) {
             val tiles = linkedSetOf<Triple<Int, Int, Int>>()
-            for (level in max(z - 1, 10)..z) {
+            // Warm parents first so Cesium always has something to drape worldwide.
+            for (level in max(z - 2, 6)..z) {
                 val (cx, cy) = latLonToTile(lat, lon, level)
                 val n = (1 shl level) - 1
-                for (dy in -radius..radius) {
-                    for (dx in -radius..radius) {
+                val r = if (level >= z - 1) radius else 1
+                for (dy in -r..r) {
+                    for (dx in -r..r) {
                         val x = (cx + dx).coerceIn(0, n)
                         val y = (cy + dy).coerceIn(0, n)
                         tiles += Triple(level, x, y)
                     }
                 }
             }
-            // Limit burst size for battery.
-            tiles.take(48).forEach { (level, x, y) ->
+            tiles.take(24).forEach { (level, x, y) ->
                 if (!enabled.get()) return@launch
                 semaphore.withPermit {
                     runCatching { imagery.getTile(level, x, y) }
