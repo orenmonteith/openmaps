@@ -61,29 +61,20 @@
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
       targetFrameRate: 30,
-      msaaSamples: 1
+      msaaSamples: 4,
+      // Critical: default true ignores devicePixelRatio → soft on Pixel/retina.
+      useBrowserRecommendedResolution: false
     };
-    // Softest first — remote/software GL often rejects high-performance + antialias.
+    // Quality first; soft options only if the device rejects the sharp path.
     var attempts = [
       {
         webgl: {
           alpha: false,
-          antialias: false,
-          depth: true,
-          stencil: false,
-          powerPreference: "default",
-          failIfMajorPerformanceCaveat: false,
-          preserveDrawingBuffer: false
-        },
-        allowTextureFilterAnisotropic: false
-      },
-      {
-        webgl: {
-          alpha: false,
-          antialias: false,
-          powerPreference: "low-power",
+          antialias: true,
+          powerPreference: "high-performance",
           failIfMajorPerformanceCaveat: false
-        }
+        },
+        allowTextureFilterAnisotropic: true
       },
       {
         webgl: {
@@ -91,16 +82,25 @@
           antialias: true,
           powerPreference: "default",
           failIfMajorPerformanceCaveat: false
-        }
+        },
+        allowTextureFilterAnisotropic: true
+      },
+      {
+        webgl: {
+          alpha: false,
+          antialias: false,
+          powerPreference: "default",
+          failIfMajorPerformanceCaveat: false
+        },
+        allowTextureFilterAnisotropic: false
       }
     ];
     var lastErr = null;
     for (var i = 0; i < attempts.length; i++) {
       try {
-        return new Cesium.Viewer(
-          "cesiumContainer",
-          Object.assign({}, base, { contextOptions: attempts[i] })
-        );
+        var opts = Object.assign({}, base, { contextOptions: attempts[i] });
+        if (i === attempts.length - 1) opts.msaaSamples = 1;
+        return new Cesium.Viewer("cesiumContainer", opts);
       } catch (err) {
         lastErr = err;
         var stale = document.getElementById("cesiumContainer");
@@ -143,25 +143,26 @@
     scene.fog.density = 0.00012;
     scene.skyAtmosphere.show = true;
     scene.globe.enableLighting = false;
-    scene.fxaa = true;
-    scene.postProcessStages.fxaa.enabled = true;
+    // FXAA softens draped satellite — keep off for crisp imagery.
+    scene.fxaa = false;
+    scene.postProcessStages.fxaa.enabled = false;
     scene.highDynamicRange = false;
-    scene.globe.tileCacheSize = 300;
+    scene.globe.tileCacheSize = 400;
     // Show ancestors ASAP so holes (blue sky) never open while children load.
     scene.globe.loadingDescendantLimit = 1;
     scene.globe.preloadAncestors = true;
     scene.globe.preloadSiblings = true;
-    scene.globe.maximumScreenSpaceError = 3.0;
+    scene.globe.maximumScreenSpaceError = 1.5;
 
     // ONE stable worldwide imagery layer — never tear it down while flying.
     viewer.imageryLayers.removeAll();
     imageryLayer = viewer.imageryLayers.addImageryProvider(
       TerrainBridge.createLocalImageryProvider(19)
     );
-    imageryLayer.brightness = 1.02;
-    imageryLayer.contrast = 1.04;
-    imageryLayer.saturation = 1.02;
-    imageryLayer.gamma = 0.95;
+    imageryLayer.brightness = 1.03;
+    imageryLayer.contrast = 1.06;
+    imageryLayer.saturation = 1.05;
+    imageryLayer.gamma = 0.92;
 
     scene.globe.imageryLayersUpdatedEvent.addEventListener(function () {
       viewer.scene.requestRender();
@@ -213,33 +214,34 @@
   }
 
   function lodForHeight(height) {
-    // Imagery max Z stays 19 on the provider; SSE decides how hard Cesium works.
+    // Imagery max Z stays 19 on the provider; lower SSE → sharper child tiles.
+    // resolutionScale is relative to devicePixelRatio (useBrowserRecommendedResolution=false).
     var sse;
-    var scale = lowPower ? 0.85 : 1.0;
+    var scale = lowPower ? 0.7 : 1.0;
     var imageryZ;
     if (height > 2.0e6) {
-      sse = 7.0;
-      imageryZ = 12;
+      sse = 5.0;
+      imageryZ = 13;
     } else if (height > 5.0e5) {
-      sse = 4.5;
-      imageryZ = 14;
+      sse = 3.0;
+      imageryZ = 15;
     } else if (height > 1.0e5) {
-      sse = 2.8;
-      imageryZ = 16;
-    } else if (height > 2.0e4) {
       sse = 1.8;
       imageryZ = 17;
-    } else if (height > 4.0e3) {
-      sse = 1.2;
+    } else if (height > 2.5e4) {
+      sse = 1.15;
       imageryZ = 18;
-      scale = lowPower ? 0.9 : 1.0;
-    } else {
-      sse = 0.9;
+    } else if (height > 5.0e3) {
+      sse = 0.8;
       imageryZ = 19;
-      scale = lowPower ? 0.95 : 1.0;
+      scale = lowPower ? 0.8 : 1.0;
+    } else {
+      sse = 0.55;
+      imageryZ = 19;
+      scale = lowPower ? 0.85 : 1.0;
     }
     if (lowPower) {
-      sse = Math.max(sse, 2.2);
+      sse = Math.max(sse, 1.8);
       imageryZ = Math.min(imageryZ, 17);
     }
     return { sse: sse, imageryZ: imageryZ, resolutionScale: scale };
@@ -281,20 +283,20 @@
     settleTimer = setTimeout(function () {
       if (!viewer || lowPower) return;
       var height = viewer.camera.positionCartographic.height;
-      // After the camera settles, pull a sharper frame without thrashing mid-gesture.
-      if (height < 80000) {
-        var sharp = Math.max(0.75, lodForHeight(height).sse * 0.75);
+      // After the camera settles, demand sharper tiles (still no layer recreate).
+      if (height < 120000) {
+        var sharp = Math.max(0.45, lodForHeight(height).sse * 0.65);
         if (viewer.scene.globe.maximumScreenSpaceError > sharp) {
           viewer.scene.globe.maximumScreenSpaceError = sharp;
           lastLod.sse = sharp;
           viewer.scene.requestRender();
         }
       }
-      if (height > 30000) return;
+      if (height > 60000) return;
       var c = viewer.camera.positionCartographic;
       var lat = Cesium.Math.toDegrees(c.latitude);
       var lon = Cesium.Math.toDegrees(c.longitude);
-      var z = Math.min(19, lastLod.imageryZ);
+      var z = Math.min(19, Math.max(lastLod.imageryZ, height < 8000 ? 19 : 18));
       fetch(
         TerrainBridge.tileServerBase() +
           "/imagery/prefetch?lat=" +
@@ -304,7 +306,7 @@
           "&z=" +
           z
       ).catch(function () {});
-    }, 700);
+    }, 450);
   }
 
   function bindDynamicLod() {

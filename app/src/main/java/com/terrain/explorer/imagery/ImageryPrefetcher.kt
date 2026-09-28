@@ -43,7 +43,7 @@ class ImageryPrefetcher(
             for (level in max(z - 2, 6)..z) {
                 val (cx, cy) = latLonToTile(lat, lon, level)
                 val n = (1 shl level) - 1
-                val r = if (level >= z - 1) radius else 1
+                val r = if (level >= z - 1) max(radius, 2) else 1
                 for (dy in -r..r) {
                     for (dx in -r..r) {
                         val x = (cx + dx).coerceIn(0, n)
@@ -52,7 +52,7 @@ class ImageryPrefetcher(
                     }
                 }
             }
-            tiles.take(24).forEach { (level, x, y) ->
+            tiles.take(36).forEach { (level, x, y) ->
                 if (!enabled.get()) return@launch
                 semaphore.withPermit {
                     runCatching { imagery.getTile(level, x, y) }

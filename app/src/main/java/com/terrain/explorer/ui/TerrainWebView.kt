@@ -52,6 +52,9 @@ fun TerrainWebView(
                 settings.mediaPlaybackRequiresUserGesture = false
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                // Keep WebView at full device DPI so Cesium's canvas isn't pre-scaled soft.
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
                 setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
                 webChromeClient = WebChromeClient()
                 webViewClient = object : WebViewClient() {
