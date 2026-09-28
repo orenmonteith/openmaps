@@ -9,11 +9,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
+import java.util.LinkedHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 
@@ -22,12 +24,19 @@ import kotlin.math.floor
  * on the Cesium geographic tiling grid.
  *
  * Height (m) = R * 256 + G + B / 256 - 32768
+ *
+ * Pixel data is cached as IntArrays (not live Bitmaps) so concurrent tile builds cannot
+ * hit a recycled Bitmap via getPixel — that previously aborted on device.
  */
 class TerrariumDecoder(
     private val http: OkHttpClient = defaultClient(),
     private val tileUrlTemplate: String = DEFAULT_URL,
 ) {
-    private val pngCache = ConcurrentHashMap<String, Bitmap>()
+    private val cacheMutex = Mutex()
+    private val tileCache = object : LinkedHashMap<String, TilePixels>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, TilePixels>?): Boolean =
+            size > MAX_CACHED_TILES
+    }
 
     suspend fun buildHeightmap(
         x: Int,
@@ -42,7 +51,6 @@ class TerrariumDecoder(
         val heights = FloatArray(size * size)
         val zoom = WebMercator.geographicLevelToMercatorZoom(level)
 
-        // Prefetch unique mercator tiles covering this geographic rectangle.
         val corners = listOf(
             rect.north to rect.west,
             rect.north to rect.east,
@@ -69,7 +77,7 @@ class TerrariumDecoder(
             maxTX = nMerc - 1
         }
         coroutineScope {
-            val jobs = mutableListOf<kotlinx.coroutines.Deferred<Bitmap?>>()
+            val jobs = mutableListOf<kotlinx.coroutines.Deferred<TilePixels?>>()
             for (ty in minTY..maxTY) {
                 for (tx in minTX..maxTX) {
                     jobs += async { loadTile(zoom, tx, ty) }
@@ -107,7 +115,7 @@ class TerrariumDecoder(
         )
     }
 
-    private fun sampleHeight(lat: Double, lon: Double, zoom: Int): Float? {
+    private suspend fun sampleHeight(lat: Double, lon: Double, zoom: Int): Float? {
         var normalizedLon = lon
         if (normalizedLon > 180.0) normalizedLon -= 360.0
         if (normalizedLon < -180.0) normalizedLon += 360.0
@@ -119,21 +127,25 @@ class TerrariumDecoder(
         val clampedY = tileY.coerceIn(0, n - 1)
         val localX = (px - tileX * 256.0).toInt().coerceIn(0, 255)
         val localY = (py - tileY * 256.0).toInt().coerceIn(0, 255)
-        val bmp = loadTile(zoom, wrappedX, clampedY) ?: return null
-        if (localX >= bmp.width || localY >= bmp.height) return null
-        val pixel = bmp.getPixel(localX, localY)
+        val tile = loadTile(zoom, wrappedX, clampedY) ?: return null
+        if (localX >= tile.width || localY >= tile.height) return null
+        val pixel = tile.pixels[localY * tile.width + localX]
         val r = (pixel shr 16) and 0xff
         val g = (pixel shr 8) and 0xff
         val b = pixel and 0xff
         return (r * 256.0 + g + b / 256.0 - 32768.0).toFloat()
     }
 
-    private fun loadTile(z: Int, x: Int, y: Int): Bitmap? {
+    private suspend fun loadTile(z: Int, x: Int, y: Int): TilePixels? {
         val n = 1 shl z
         val wx = ((x % n) + n) % n
         val wy = y.coerceIn(0, n - 1)
         val key = "$z/$wx/$wy"
-        pngCache[key]?.let { return it }
+
+        cacheMutex.withLock {
+            tileCache[key]?.let { return it }
+        }
+
         val url = tileUrlTemplate
             .replace("{z}", z.toString())
             .replace("{x}", wx.toString())
@@ -144,29 +156,38 @@ class TerrariumDecoder(
                 if (!response.isSuccessful) return null
                 val bytes = response.body?.bytes() ?: return null
                 val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-                if (pngCache.size > 96) {
-                    val first = pngCache.keys.firstOrNull()
-                    if (first != null) {
-                        pngCache.remove(first)?.recycle()
-                    }
+                val w = bmp.width
+                val h = bmp.height
+                val pixels = IntArray(w * h)
+                bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+                // Safe: no other thread holds this Bitmap.
+                if (!bmp.isRecycled) bmp.recycle()
+                val tile = TilePixels(w, h, pixels)
+                cacheMutex.withLock {
+                    tileCache[key] = tile
                 }
-                pngCache[key] = bmp
-                bmp
+                tile
             }
         } catch (_: IOException) {
             null
         }
     }
 
-    fun clearMemoryCache() {
-        pngCache.values.forEach { it.recycle() }
-        pngCache.clear()
+    suspend fun clearMemoryCache() {
+        cacheMutex.withLock { tileCache.clear() }
     }
+
+    private data class TilePixels(
+        val width: Int,
+        val height: Int,
+        val pixels: IntArray,
+    )
 
     companion object {
         const val DEFAULT_URL =
             "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
         const val USER_AGENT = "TerrainExplorer/0.1 (offline-first Android terrain; open-data)"
+        private const val MAX_CACHED_TILES = 96
 
         fun defaultClient(): OkHttpClient =
             OkHttpClient.Builder()

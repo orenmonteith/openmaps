@@ -9,6 +9,10 @@
     return "http://127.0.0.1:" + (global.TERRAIN_PORT || "8765");
   }
 
+  function flatHeights(size) {
+    return new Float32Array(size * size); // zeros — safe fallback; never crash Cesium at LOD 0
+  }
+
   function createLocalTerrainProvider() {
     var size = 65;
     return new Cesium.CustomHeightmapTerrainProvider({
@@ -19,18 +23,20 @@
         return fetch(url)
           .then(function (res) {
             if (!res.ok) {
-              // Signal Cesium to use parent tile geometry.
-              return undefined;
+              // Level 0 has no parent — returning undefined can abort Cesium.
+              return level === 0 ? flatHeights(size) : undefined;
             }
             return res.arrayBuffer();
           })
           .then(function (buffer) {
-            if (!buffer) return undefined;
+            if (!buffer) {
+              return level === 0 ? flatHeights(size) : undefined;
+            }
+            if (buffer instanceof Float32Array) return buffer;
             var heights = new Float32Array(buffer);
             if (heights.length !== size * size) {
-              return undefined;
+              return level === 0 ? flatHeights(size) : undefined;
             }
-            // Push debug metadata (fire-and-forget).
             fetch(tileServerBase() + "/terrain/" + level + "/" + x + "/" + y + ".json")
               .then(function (r) { return r.ok ? r.json() : null; })
               .then(function (meta) {
@@ -53,7 +59,7 @@
             return heights;
           })
           .catch(function () {
-            return undefined;
+            return level === 0 ? flatHeights(size) : undefined;
           });
       }
     });
