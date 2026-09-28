@@ -90,9 +90,13 @@ object WebMercator {
         return Math.toDegrees(atan(0.5 * (exp(n) - exp(-n))))
     }
 
-    /** Map Cesium geographic LOD to a Web Mercator zoom that roughly matches resolution. */
+    /**
+     * Map Cesium geographic LOD to a Web Mercator zoom that roughly matches sample spacing.
+     * Cap at 14 — Terrarium/SRTM-class detail does not improve meaningfully beyond that,
+     * and higher zooms amplify sampling noise ("corruption") when zoomed in.
+     */
     fun geographicLevelToMercatorZoom(level: Int): Int {
         // Geographic level 0 ≈ two 180° tiles; Mercator z0 is one world tile.
-        return (level + 1).coerceIn(0, 15)
+        return (level + 2).coerceIn(0, 14)
     }
 }

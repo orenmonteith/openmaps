@@ -1,6 +1,6 @@
 # DEM & Imagery License Notes
 
-This document records datasets used by Terrain Explorer. Runtime fetch + on-device cache only — datasets are **not** bundled in the APK.
+This document records datasets used by OpenMaps. Runtime fetch + on-device cache only — datasets are **not** bundled in the APK.
 
 ## USGS 3DEP
 

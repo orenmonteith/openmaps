@@ -120,16 +120,32 @@ class TerrariumDecoder(
         if (normalizedLon > 180.0) normalizedLon -= 360.0
         if (normalizedLon < -180.0) normalizedLon += 360.0
         val (px, py) = WebMercator.latLonToPixel(lat, normalizedLon, zoom)
-        val tileX = floor(px / 256.0).toInt()
-        val tileY = floor(py / 256.0).toInt()
+        // Bilinear sample in pixel space for smoother close-up meshes.
+        val x0 = floor(px).toInt()
+        val y0 = floor(py).toInt()
+        val fx = (px - x0).toFloat().coerceIn(0f, 1f)
+        val fy = (py - y0).toFloat().coerceIn(0f, 1f)
+        val h00 = heightAtWorldPixel(x0, y0, zoom) ?: return null
+        val h10 = heightAtWorldPixel(x0 + 1, y0, zoom) ?: h00
+        val h01 = heightAtWorldPixel(x0, y0 + 1, zoom) ?: h00
+        val h11 = heightAtWorldPixel(x0 + 1, y0 + 1, zoom) ?: h10
+        val h0 = h00 * (1f - fx) + h10 * fx
+        val h1 = h01 * (1f - fx) + h11 * fx
+        return h0 * (1f - fy) + h1 * fy
+    }
+
+    private suspend fun heightAtWorldPixel(worldX: Int, worldY: Int, zoom: Int): Float? {
         val n = 1 shl zoom
-        val wrappedX = ((tileX % n) + n) % n
-        val clampedY = tileY.coerceIn(0, n - 1)
-        val localX = (px - tileX * 256.0).toInt().coerceIn(0, 255)
-        val localY = (py - tileY * 256.0).toInt().coerceIn(0, 255)
-        val tile = loadTile(zoom, wrappedX, clampedY) ?: return null
+        val tileX = ((worldX.floorDiv(256) % n) + n) % n
+        val tileY = worldY.floorDiv(256).coerceIn(0, n - 1)
+        val localX = ((worldX % 256) + 256) % 256
+        val localY = worldY.coerceIn(0, n * 256 - 1) % 256
+        val tile = loadTile(zoom, tileX, tileY) ?: return null
         if (localX >= tile.width || localY >= tile.height) return null
-        val pixel = tile.pixels[localY * tile.width + localX]
+        return decodeTerrarium(tile.pixels[localY * tile.width + localX])
+    }
+
+    private fun decodeTerrarium(pixel: Int): Float {
         val r = (pixel shr 16) and 0xff
         val g = (pixel shr 8) and 0xff
         val b = pixel and 0xff
@@ -186,7 +202,7 @@ class TerrariumDecoder(
     companion object {
         const val DEFAULT_URL =
             "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-        const val USER_AGENT = "TerrainExplorer/0.1 (offline-first Android terrain; open-data)"
+        const val USER_AGENT = "OpenMaps/0.1 (offline-first Android terrain; open-data)"
         private const val MAX_CACHED_TILES = 96
 
         fun defaultClient(): OkHttpClient =

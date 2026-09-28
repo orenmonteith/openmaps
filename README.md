@@ -1,4 +1,4 @@
-# Terrain Explorer
+# OpenMaps
 
 Worldwide, offline-first **3D terrain** for Android: real DEM elevation meshes with satellite imagery draped on the surface — not hillshade.
 

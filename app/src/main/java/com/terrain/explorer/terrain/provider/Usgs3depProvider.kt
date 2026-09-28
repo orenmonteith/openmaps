@@ -249,7 +249,8 @@ class Usgs3depProvider(
         commercialUse = "Allowed (public domain).",
         redistribution = "Public domain; attribution requested. Prefer runtime access over bundling large DEMs.",
         apiNotes = "ImageServer getSamples + Terrarium/NED fallback. Aggressive on-device cache required.",
-        maxLevel = 13,
+        // Avoid deep EPQS upsampling that looks corrupt when zoomed in; Terrarium/NED covers finer LODs.
+        maxLevel = 10,
     )
 
     companion object {

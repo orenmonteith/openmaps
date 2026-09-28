@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Terrain Explorer</string>
+    <string name="app_name">OpenMaps</string>
     <string name="locate_me">Locate me</string>
     <string name="toggle_debug">Debug</string>
     <string name="reset_north">North</string>

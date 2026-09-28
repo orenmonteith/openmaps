@@ -58,7 +58,7 @@ function latLonToPixel(lat, lon, zoom) {
   return [x, y];
 }
 function geoLevelToZoom(level) {
-  return Math.min(15, Math.max(0, level + 1));
+  return Math.min(14, Math.max(0, level + 2));
 }
 function approxRes(level) {
   const meters = (180 / yTiles(level)) * 111320;
@@ -268,5 +268,5 @@ if (!fs.existsSync(path.join(WEB, "cesium", "Cesium.js"))) {
 }
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Terrain Explorer preview http://127.0.0.1:${PORT}`);
+  console.log(`OpenMaps preview http://127.0.0.1:${PORT}`);
 });

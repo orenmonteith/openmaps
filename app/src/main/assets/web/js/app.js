@@ -5,7 +5,6 @@
   "use strict";
 
   var viewer = null;
-  var interacting = false;
   var interactTimer = null;
 
   function init() {
@@ -14,7 +13,6 @@
       return;
     }
 
-    // Fully offline-capable boot: no Cesium ion token required.
     Cesium.Ion.defaultAccessToken = undefined;
 
     var terrainProvider = TerrainBridge.createLocalTerrainProvider();
@@ -53,9 +51,21 @@
     scene.fxaa = false;
     scene.postProcessStages.fxaa.enabled = false;
     scene.highDynamicRange = false;
-    scene.globe.maximumScreenSpaceError = 2.0;
+    scene.globe.tileCacheSize = 120;
+    scene.globe.loadingDescendantLimit = 2;
+    scene.globe.preloadAncestors = true;
+    scene.globe.preloadSiblings = false;
+    // Start conservative for far views; updateSse() tightens when close.
+    scene.globe.maximumScreenSpaceError = 6.0;
 
-    // Start over the White Mountains (Mount Washington area) — not hardcoded as the only region.
+    var controller = scene.screenSpaceCameraController;
+    // More sensitive zoom (especially noticeable when zooming out).
+    controller.zoomFactor = 14.0;
+    controller.minimumZoomDistance = 60.0;
+    controller.maximumZoomDistance = 4.0e7;
+    controller.inertiaZoom = 0.8;
+    controller.enableCollisionDetection = true;
+
     viewer.camera.setView({
       destination: Cesium.Cartesian3.fromDegrees(-71.3036, 44.2706, 18000),
       orientation: {
@@ -66,6 +76,8 @@
     });
 
     bindInteractionThrottling();
+    bindDynamicLod();
+    updateSse();
     viewer.scene.requestRender();
 
     if (global.AndroidBridge && global.AndroidBridge.onEngineReady) {
@@ -75,23 +87,47 @@
     pollDebug();
   }
 
+  function updateSse() {
+    if (!viewer) return;
+    var height = viewer.camera.positionCartographic.height;
+    var sse;
+    if (height > 2.0e6) {
+      sse = 10.0; // continent / globe — fewer tiles, snappier
+    } else if (height > 4.0e5) {
+      sse = 7.0;
+    } else if (height > 8.0e4) {
+      sse = 4.5;
+    } else if (height > 1.5e4) {
+      sse = 2.5;
+    } else if (height > 3.0e3) {
+      sse = 1.75; // approach DEM resolution
+    } else {
+      sse = 1.25; // close — max detail within capped terrain LOD
+    }
+    if (viewer.scene.globe.maximumScreenSpaceError !== sse) {
+      viewer.scene.globe.maximumScreenSpaceError = sse;
+    }
+  }
+
+  function bindDynamicLod() {
+    viewer.camera.changed.addEventListener(function () {
+      updateSse();
+      viewer.scene.requestRender();
+    });
+  }
+
   function bindInteractionThrottling() {
     var canvas = viewer.canvas;
     function bump() {
-      interacting = true;
       viewer.targetFrameRate = 30;
       viewer.scene.requestRender();
       if (interactTimer) clearTimeout(interactTimer);
       interactTimer = setTimeout(function () {
-        interacting = false;
         viewer.targetFrameRate = 8;
       }, 800);
     }
     ["pointerdown", "pointermove", "wheel", "touchstart", "touchmove"].forEach(function (evt) {
       canvas.addEventListener(evt, bump, { passive: true });
-    });
-    viewer.camera.changed.addEventListener(function () {
-      viewer.scene.requestRender();
     });
   }
 
@@ -149,8 +185,16 @@
     setBatteryMode: function (lowPower, resolutionScale) {
       if (!viewer) return;
       viewer.resolutionScale = resolutionScale || (lowPower ? 0.7 : 1.0);
-      viewer.scene.globe.maximumScreenSpaceError = lowPower ? 4.0 : 2.0;
-      viewer.targetFrameRate = lowPower ? 20 : 30;
+      if (lowPower) {
+        viewer.scene.globe.maximumScreenSpaceError = Math.max(
+          viewer.scene.globe.maximumScreenSpaceError,
+          6.0
+        );
+        viewer.targetFrameRate = 20;
+      } else {
+        updateSse();
+        viewer.targetFrameRate = 30;
+      }
       viewer.scene.requestRender();
     },
     _onDebug: null

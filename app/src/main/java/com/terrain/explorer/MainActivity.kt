@@ -127,12 +127,12 @@ private fun TerrainScreen(
     var debug by remember { mutableStateOf(TerrainDebugInfo()) }
     var showDebug by remember { mutableStateOf(true) }
     var engineReady by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Starting terrain engine…") }
+    var status by remember { mutableStateOf("Starting OpenMaps…") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(engineReady) {
-        if (engineReady) status = "Explore worldwide 3D terrain"
+        if (engineReady) status = "Worldwide 3D terrain"
     }
 
     Box(
@@ -157,12 +157,12 @@ private fun TerrainScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "TERRAIN EXPLORER",
+                text = "OpenMaps",
                 color = Ink,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Serif,
-                letterSpacing = 1.sp,
+                letterSpacing = 0.5.sp,
             )
             Text(
                 text = status,
