@@ -3,10 +3,13 @@ package com.terrain.explorer
 import android.Manifest
 import android.os.BatteryManager
 import android.os.Bundle
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,14 +18,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -38,14 +47,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import android.webkit.WebView
+import com.terrain.explorer.search.GeocodeResult
 import com.terrain.explorer.terrain.model.TerrainDebugInfo
+import com.terrain.explorer.trails.TrailActivity
 import com.terrain.explorer.ui.TerrainWebView
 import com.terrain.explorer.ui.flyTo
 import com.terrain.explorer.ui.resetNorth
+import com.terrain.explorer.ui.setTrailActivity
+import com.terrain.explorer.ui.setTrailsEnabled
+import com.terrain.explorer.ui.showUserLocation
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -66,6 +80,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val app = application as TerrainApp
         app.tileServer.ensureStarted()
+        app.tileServer.setPrefetchEnabled(!isLowPower())
 
         setContent {
             TerrainTheme {
@@ -129,10 +144,18 @@ private fun TerrainScreen(
     var engineReady by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Starting OpenMaps…") }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
+    var trailsOn by remember { mutableStateOf(true) }
+    var activity by remember { mutableStateOf(TrailActivity.HIKE) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(engineReady) {
-        if (engineReady) status = "Worldwide 3D terrain"
+        if (engineReady) {
+            status = "Worldwide 3D terrain"
+            webView?.setTrailsEnabled(trailsOn)
+            webView?.setTrailActivity(activity.name)
+        }
     }
 
     Box(
@@ -170,6 +193,55 @@ private fun TerrainScreen(
                 fontSize = 14.sp,
             )
 
+            SearchBar(
+                query = query,
+                onQueryChange = { query = it },
+                onSearch = {
+                    scope.launch {
+                        status = "Searching…"
+                        results = app.geocoder.search(query)
+                        status = if (results.isEmpty()) "No places found" else "${results.size} places"
+                    }
+                },
+            )
+
+            if (results.isNotEmpty()) {
+                Surface(color = Panel, shape = RoundedCornerShape(12.dp)) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        results.take(5).forEach { r ->
+                            Text(
+                                text = r.displayName,
+                                color = Ink,
+                                fontSize = 13.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        webView?.flyTo(r.latitude, r.longitude, 6000.0)
+                                        results = emptyList()
+                                        status = r.displayName
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            ActivityRow(
+                selected = activity,
+                trailsOn = trailsOn,
+                onSelect = {
+                    activity = it
+                    webView?.setTrailActivity(it.name)
+                    status = "${it.name.lowercase()} trails"
+                },
+                onToggleTrails = {
+                    trailsOn = !trailsOn
+                    webView?.setTrailsEnabled(trailsOn)
+                    status = if (trailsOn) "Trails on" else "Trails off"
+                },
+            )
+
             if (showDebug) {
                 DebugPanel(debug = debug, cacheMb = app.cache.usageBytes() / (1024.0 * 1024.0))
             }
@@ -203,7 +275,8 @@ private fun TerrainScreen(
                             status = "Locating…"
                             val pos = app.locationFacade.currentPosition(highAccuracy = true)
                             if (pos != null) {
-                                webView?.flyTo(pos.latitude, pos.longitude)
+                                webView?.showUserLocation(pos.latitude, pos.longitude)
+                                webView?.flyTo(pos.latitude, pos.longitude, 2500.0)
                                 status = "Located ${"%.4f".format(pos.latitude)}, ${"%.4f".format(pos.longitude)}"
                             } else {
                                 status = "Location unavailable"
@@ -231,24 +304,96 @@ private fun TerrainScreen(
 }
 
 @Composable
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        placeholder = { Text("Search places", color = Ink.copy(alpha = 0.5f)) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Accent) },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Ink,
+            unfocusedTextColor = Ink,
+            focusedBorderColor = Accent,
+            unfocusedBorderColor = Ink.copy(alpha = 0.35f),
+            cursorColor = Accent,
+            focusedContainerColor = Panel,
+            unfocusedContainerColor = Panel,
+        ),
+        shape = RoundedCornerShape(12.dp),
+    )
+}
+
+@Composable
+private fun ActivityRow(
+    selected: TrailActivity,
+    trailsOn: Boolean,
+    onSelect: (TrailActivity) -> Unit,
+    onToggleTrails: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Chip(label = if (trailsOn) "Trails on" else "Trails off", selected = trailsOn, onClick = onToggleTrails)
+        TrailActivity.entries.forEach { mode ->
+            Chip(
+                label = mode.name.lowercase().replaceFirstChar { it.titlecase() },
+                selected = selected == mode && trailsOn,
+                onClick = { onSelect(mode) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        color = if (selected) Accent else Panel,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Deep else Ink,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
 private fun DebugPanel(debug: TerrainDebugInfo, cacheMb: Double) {
     Surface(
         color = Panel,
         shape = RoundedCornerShape(12.dp),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("DEM DEBUG", color = Accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text("DEBUG", color = Accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                DebugItem("Source", debug.providerId)
+                DebugItem("DEM", debug.providerId)
                 DebugItem(
-                    "Resolution",
-                    if (debug.resolutionMeters.isNaN()) "—" else "${"%.0f".format(debug.resolutionMeters)} m",
+                    "DEM m",
+                    if (debug.resolutionMeters.isNaN()) "—" else "${"%.0f".format(debug.resolutionMeters)}",
                 )
                 DebugItem("LOD", if (debug.level < 0) "—" else debug.level.toString())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                DebugItem("Imagery", debug.imagerySource)
+                DebugItem("Img Z", if (debug.imageryZ < 0) "—" else debug.imageryZ.toString())
+                DebugItem("SSE", debug.sse)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                DebugItem("Scale", debug.resolutionScale)
                 DebugItem("Cache", if (debug.cacheHit) "hit" else "miss")
-                DebugItem("Mode", if (debug.offline) "offline" else "online")
                 DebugItem("Disk", "${"%.0f".format(cacheMb)} MB")
             }
         }

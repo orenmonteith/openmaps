@@ -112,6 +112,28 @@ fun WebView.flyTo(lat: Double, lon: Double, height: Double = 8000.0) {
     )
 }
 
+fun WebView.showUserLocation(lat: Double, lon: Double) {
+    evaluateJavascript(
+        "window.TerrainApp && window.TerrainApp.showUserLocation($lat, $lon);",
+        null,
+    )
+}
+
+fun WebView.setTrailsEnabled(enabled: Boolean) {
+    evaluateJavascript(
+        "window.TerrainApp && window.TerrainApp.setTrailsEnabled(${if (enabled) "true" else "false"});",
+        null,
+    )
+}
+
+fun WebView.setTrailActivity(activity: String) {
+    val safe = activity.replace("'", "")
+    evaluateJavascript(
+        "window.TerrainApp && window.TerrainApp.setTrailActivity('$safe');",
+        null,
+    )
+}
+
 fun WebView.resetNorth() {
     evaluateJavascript("window.TerrainApp && window.TerrainApp.resetNorth();", null)
 }

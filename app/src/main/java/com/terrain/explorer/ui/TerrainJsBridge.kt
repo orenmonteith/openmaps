@@ -19,6 +19,10 @@ class TerrainJsBridge(
                     level = obj.optInt("level", -1),
                     cacheHit = obj.optBoolean("cacheHit", false),
                     offline = obj.optBoolean("offline", false),
+                    imagerySource = obj.optString("imagery", "—"),
+                    imageryZ = obj.optInt("imageryZ", -1),
+                    sse = obj.optString("sse", "—"),
+                    resolutionScale = obj.optString("resolutionScale", "—"),
                 ),
             )
         } catch (_: Exception) {

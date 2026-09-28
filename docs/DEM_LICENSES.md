@@ -68,6 +68,28 @@ Encoding: `height = R*256 + G + B/256 - 32768` (meters).
 
 Imagery provider id: `esri-world-imagery`
 
+## USGS Imagery Only (regional high-res)
+
+| Field | Value |
+| --- | --- |
+| Dataset | USGS Imagery Only basemap |
+| Coverage | United States (strongest in CONUS) |
+| Source | https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer |
+| License | Public domain USGS; attribution requested |
+| Attribution | USGS Imagery — data available from U.S. Geological Survey, National Geospatial Program. |
+| Use in OpenMaps | Selected at high zoom (z≥14) when the tile center is in coverage; falls back to Esri worldwide |
+| Redistribution | Runtime tiles + device cache only |
+
+Imagery provider id: `usgs-imagery`
+
+## Geocoding & trails (runtime)
+
+| Service | Use | Notes |
+| --- | --- | --- |
+| Nominatim (OSM) | Place search | Identify with app User-Agent; no bulk geocoding; respect usage policy |
+| Overpass API | Hiking/bike/ski ways | OSM ODbL; attribution to OpenStreetMap contributors |
+
 ## Honesty policy
 
-The app must never claim a finer DEM resolution than the active provider reports. The debug HUD shows `DEM source`, `resolution (m)`, and `tile LOD`.
+The app must never claim a finer DEM resolution than the active provider reports. The debug HUD shows `DEM source`, `resolution (m)`, `tile LOD`, imagery source, imagery Z, and SSE.
+

@@ -1,8 +1,13 @@
 package com.terrain.explorer.terrain.server
 
 import android.content.res.AssetManager
+import com.terrain.explorer.imagery.ImageryPrefetcher
 import com.terrain.explorer.imagery.ImageryProvider
+import com.terrain.explorer.imagery.ImageryProviderSelector
+import com.terrain.explorer.search.GeocoderService
 import com.terrain.explorer.terrain.TerrainRepository
+import com.terrain.explorer.trails.TrailActivity
+import com.terrain.explorer.trails.TrailService
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -10,26 +15,27 @@ import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Serves DEM heightmaps, imagery, and Cesium web assets to the WebView over localhost.
- *
- * Routes:
- *  GET /health
- *  GET /terrain/{level}/{x}/{y}.json
- *  GET /terrain/{level}/{x}/{y}.heights
- *  GET /imagery/{z}/{x}/{y}.jpg
- *  GET /debug
- *  GET /cesium/...  /js/...  /css/...  (from assets/web)
+ * Serves DEM, imagery, geocode, trails, and Cesium web assets to the WebView.
  */
 class LocalTileServer(
     private val terrainRepository: TerrainRepository,
     private val imageryProvider: ImageryProvider,
     private val assets: AssetManager,
+    private val imageryPrefetcher: ImageryPrefetcher,
+    private val geocoder: GeocoderService = GeocoderService(),
+    private val trailService: TrailService = TrailService(),
     port: Int = 0,
 ) : NanoHTTPD("127.0.0.1", port) {
 
     private val started = AtomicBoolean(false)
+    private val prefetchEnabled = AtomicBoolean(true)
+    private val lastImageryZ = AtomicInteger(-1)
+    private val lastSse = AtomicReference("—")
+    private val lastResolutionScale = AtomicReference("1.0")
 
     val boundPort: Int
         get() = listeningPort
@@ -40,7 +46,13 @@ class LocalTileServer(
         }
     }
 
+    fun setPrefetchEnabled(enabled: Boolean) {
+        prefetchEnabled.set(enabled)
+        imageryPrefetcher.setEnabled(enabled)
+    }
+
     fun shutdown() {
+        imageryPrefetcher.shutdown()
         stop()
         started.set(false)
     }
@@ -50,10 +62,15 @@ class LocalTileServer(
             return text(Response.Status.OK, "").also { addCors(it) }
         }
         val uri = session.uri.substringBefore('?')
+        val params = session.parms
         return try {
             when {
                 uri == "/health" -> text(Response.Status.OK, "ok")
                 uri == "/debug" -> debug()
+                uri == "/geocode" -> geocode(params["q"])
+                uri == "/trails" -> trails(params)
+                uri == "/imagery/prefetch" -> prefetch(params)
+                uri == "/client/lod" -> clientLod(params)
                 uri.startsWith("/terrain/") && uri.endsWith(".heights") -> terrainHeights(uri)
                 uri.startsWith("/terrain/") && uri.endsWith(".json") -> terrainMeta(uri)
                 uri.startsWith("/imagery/") -> imagery(uri)
@@ -63,6 +80,71 @@ class LocalTileServer(
         } catch (e: Exception) {
             text(Response.Status.INTERNAL_ERROR, e.message ?: "error")
         }
+    }
+
+    private fun clientLod(params: Map<String, String>): Response {
+        params["imageryZ"]?.toIntOrNull()?.let { lastImageryZ.set(it) }
+        params["sse"]?.let { lastSse.set(it) }
+        params["resolutionScale"]?.let { lastResolutionScale.set(it) }
+        return text(Response.Status.OK, "ok")
+    }
+
+    private fun prefetch(params: Map<String, String>): Response {
+        if (!prefetchEnabled.get()) {
+            return json(JSONObject().put("ok", false).put("reason", "disabled"))
+        }
+        val lat = params["lat"]?.toDoubleOrNull()
+        val lon = params["lon"]?.toDoubleOrNull()
+        val z = params["z"]?.toIntOrNull() ?: 16
+        if (lat == null || lon == null) {
+            return text(Response.Status.BAD_REQUEST, "lat/lon required")
+        }
+        imageryPrefetcher.prefetchAround(lat, lon, z)
+        lastImageryZ.set(z)
+        return json(JSONObject().put("ok", true).put("z", z))
+    }
+
+    private fun geocode(q: String?): Response {
+        if (q.isNullOrBlank()) return text(Response.Status.BAD_REQUEST, "q required")
+        val results = runBlocking { geocoder.search(q) }
+        val arr = org.json.JSONArray()
+        results.forEach { r ->
+            arr.put(
+                JSONObject()
+                    .put("name", r.displayName)
+                    .put("lat", r.latitude)
+                    .put("lon", r.longitude),
+            )
+        }
+        return json(JSONObject().put("results", arr))
+    }
+
+    private fun trails(params: Map<String, String>): Response {
+        val south = params["south"]?.toDoubleOrNull()
+        val west = params["west"]?.toDoubleOrNull()
+        val north = params["north"]?.toDoubleOrNull()
+        val east = params["east"]?.toDoubleOrNull()
+        if (south == null || west == null || north == null || east == null) {
+            return text(Response.Status.BAD_REQUEST, "bbox required")
+        }
+        // Guard huge bboxes (battery / Overpass).
+        if (north - south > 0.6 || east - west > 0.6) {
+            return newFixedLengthResponse(
+                Response.Status.OK,
+                "application/json",
+                """{"type":"FeatureCollection","features":[],"error":"bbox too large"}""",
+            ).also { addCors(it) }
+        }
+        val activity = when (params["activity"]?.uppercase()) {
+            "BIKE" -> TrailActivity.BIKE
+            "SKI" -> TrailActivity.SKI
+            "EXPLORE" -> TrailActivity.EXPLORE
+            else -> TrailActivity.HIKE
+        }
+        val geojson = runBlocking {
+            trailService.fetchTrails(south, west, north, east, activity)
+        }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", geojson).also { addCors(it) }
     }
 
     private fun staticAsset(uri: String): Response {
@@ -77,7 +159,6 @@ class LocalTileServer(
     private fun asset(assetPath: String, mime: String): Response {
         return try {
             val stream = assets.open(assetPath)
-            // NanoHTTPD will close the stream.
             newChunkedResponse(Response.Status.OK, mime, stream).also { addCors(it) }
         } catch (_: Exception) {
             text(Response.Status.NOT_FOUND, "missing $assetPath")
@@ -100,13 +181,20 @@ class LocalTileServer(
 
     private fun debug(): Response {
         val d = terrainRepository.debug.value
+        val imageryId = when (imageryProvider) {
+            is ImageryProviderSelector -> imageryProvider.lastSourceId
+            else -> imageryProvider.id
+        }
         val json = JSONObject()
             .put("providerId", d.providerId)
             .put("resolutionMeters", if (d.resolutionMeters.isNaN()) JSONObject.NULL else d.resolutionMeters)
             .put("level", d.level)
             .put("cacheHit", d.cacheHit)
             .put("offline", d.offline)
-            .put("imagery", imageryProvider.id)
+            .put("imagery", imageryId)
+            .put("imageryZ", lastImageryZ.get())
+            .put("sse", lastSse.get())
+            .put("resolutionScale", lastResolutionScale.get())
             .put("attribution", imageryProvider.attribution)
         return json(json)
     }
@@ -152,6 +240,7 @@ class LocalTileServer(
         val z = parts[0].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad z")
         val x = parts[1].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad x")
         val y = parts[2].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad y")
+        lastImageryZ.set(z)
         val bytes = runBlocking { imageryProvider.getTile(z, x, y) }
             ?: return text(Response.Status.NOT_FOUND, "no imagery")
         return newFixedLengthResponse(

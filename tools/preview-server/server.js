@@ -100,6 +100,9 @@ function heightFromPng(png, lx, ly) {
 }
 
 async function buildHeights(x, y, level) {
+  if (level > 11) {
+    throw new Error("terrain level capped");
+  }
   const cacheKey = `${level}/${x}/${y}`;
   if (heightCache.has(cacheKey)) {
     const cached = heightCache.get(cacheKey);

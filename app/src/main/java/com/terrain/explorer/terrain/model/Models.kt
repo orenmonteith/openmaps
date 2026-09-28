@@ -95,4 +95,8 @@ data class TerrainDebugInfo(
     val level: Int = -1,
     val cacheHit: Boolean = false,
     val offline: Boolean = false,
+    val imagerySource: String = "—",
+    val imageryZ: Int = -1,
+    val sse: String = "—",
+    val resolutionScale: String = "—",
 )
