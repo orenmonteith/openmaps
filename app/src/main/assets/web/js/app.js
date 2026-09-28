@@ -152,17 +152,18 @@
     scene.globe.loadingDescendantLimit = 1;
     scene.globe.preloadAncestors = true;
     scene.globe.preloadSiblings = true;
-    scene.globe.maximumScreenSpaceError = 1.5;
+    scene.globe.maximumScreenSpaceError = 1.25;
 
     // ONE stable worldwide imagery layer — never tear it down while flying.
     viewer.imageryLayers.removeAll();
     imageryLayer = viewer.imageryLayers.addImageryProvider(
       TerrainBridge.createLocalImageryProvider(19)
     );
-    imageryLayer.brightness = 1.03;
-    imageryLayer.contrast = 1.06;
-    imageryLayer.saturation = 1.05;
-    imageryLayer.gamma = 0.92;
+    // Keep color grading neutral — contrast/gamma exaggerate Esri tile seams.
+    imageryLayer.brightness = 1.0;
+    imageryLayer.contrast = 1.0;
+    imageryLayer.saturation = 1.0;
+    imageryLayer.gamma = 1.0;
 
     scene.globe.imageryLayersUpdatedEvent.addEventListener(function () {
       viewer.scene.requestRender();
@@ -220,23 +221,23 @@
     var scale = lowPower ? 0.7 : 1.0;
     var imageryZ;
     if (height > 2.0e6) {
-      sse = 5.0;
+      sse = 4.0;
       imageryZ = 13;
     } else if (height > 5.0e5) {
-      sse = 3.0;
+      sse = 2.4;
       imageryZ = 15;
     } else if (height > 1.0e5) {
-      sse = 1.8;
+      sse = 1.4;
       imageryZ = 17;
     } else if (height > 2.5e4) {
-      sse = 1.15;
+      sse = 0.95;
       imageryZ = 18;
     } else if (height > 5.0e3) {
-      sse = 0.8;
+      sse = 0.65;
       imageryZ = 19;
       scale = lowPower ? 0.8 : 1.0;
     } else {
-      sse = 0.55;
+      sse = 0.45;
       imageryZ = 19;
       scale = lowPower ? 0.85 : 1.0;
     }
@@ -283,20 +284,20 @@
     settleTimer = setTimeout(function () {
       if (!viewer || lowPower) return;
       var height = viewer.camera.positionCartographic.height;
-      // After the camera settles, demand sharper tiles (still no layer recreate).
-      if (height < 120000) {
-        var sharp = Math.max(0.45, lodForHeight(height).sse * 0.65);
+      // After the camera settles, demand sharper tiles across the whole frustum.
+      if (height < 150000) {
+        var sharp = Math.max(0.4, lodForHeight(height).sse * 0.55);
         if (viewer.scene.globe.maximumScreenSpaceError > sharp) {
           viewer.scene.globe.maximumScreenSpaceError = sharp;
           lastLod.sse = sharp;
           viewer.scene.requestRender();
         }
       }
-      if (height > 60000) return;
+      if (height > 80000) return;
       var c = viewer.camera.positionCartographic;
       var lat = Cesium.Math.toDegrees(c.latitude);
       var lon = Cesium.Math.toDegrees(c.longitude);
-      var z = Math.min(19, Math.max(lastLod.imageryZ, height < 8000 ? 19 : 18));
+      var z = Math.min(19, Math.max(lastLod.imageryZ, height < 12000 ? 19 : 18));
       fetch(
         TerrainBridge.tileServerBase() +
           "/imagery/prefetch?lat=" +
@@ -306,7 +307,7 @@
           "&z=" +
           z
       ).catch(function () {});
-    }, 450);
+    }, 350);
   }
 
   function bindDynamicLod() {
