@@ -5,11 +5,15 @@ Worldwide, offline-first **3D terrain** for Android: real DEM elevation meshes w
 ## Features (MVP)
 
 - Pluggable DEM providers (`TerrainDataProvider`) — USGS 3DEP (US) + global Terrarium/SRTM-class baseline
+- Distance-based **imagery LOD** — high-z satellite near the camera, cheaper tiles when far
+- Imagery selector: Esri worldwide + USGS Imagery override in the US at high zoom
+- Near-frustum imagery prefetch (paused on low battery / offline)
 - CesiumJS WebView renderer with orbit / tilt / zoom / pan
+- GPS on-mesh marker + locate / fly-to
+- Place search (Nominatim) and OSM trail overlays (hike / bike / ski / explore)
 - Cache-first disk store for DEM + imagery (visited areas work offline)
 - Battery-aware rendering (`requestRenderMode`, FPS caps, WebView pause, low-power resolution scale)
-- Debug HUD: DEM source, resolution (m), LOD, cache hit/miss
-- Single GPS facade (WGS84) shared with the 3D camera
+- Debug HUD: DEM, imagery source/Z, SSE, cache
 
 ## Stack
 

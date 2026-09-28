@@ -201,7 +201,26 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", (_req, res) => res.type("text").send("ok"));
-app.get("/debug", (_req, res) => res.json(lastDebug));
+app.get("/debug", (_req, res) =>
+  res.json({
+    ...lastDebug,
+    imagery: "esri-world-imagery",
+    imageryZ: lastDebug.imageryZ ?? -1,
+    sse: lastDebug.sse ?? "—",
+    resolutionScale: lastDebug.resolutionScale ?? "1",
+  }),
+);
+app.get("/client/lod", (req, res) => {
+  lastDebug.imageryZ = Number(req.query.imageryZ || -1);
+  lastDebug.sse = String(req.query.sse || "—");
+  lastDebug.resolutionScale = String(req.query.resolutionScale || "1");
+  res.type("text").send("ok");
+});
+app.get("/imagery/prefetch", (_req, res) => res.json({ ok: true }));
+app.get("/geocode", (_req, res) => res.json({ results: [] }));
+app.get("/trails", (_req, res) =>
+  res.json({ type: "FeatureCollection", features: [] }),
+);
 
 app.get("/terrain/:level/:x/:y.json", async (req, res) => {
   try {
