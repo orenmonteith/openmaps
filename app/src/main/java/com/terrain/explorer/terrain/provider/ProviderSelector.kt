@@ -5,8 +5,9 @@ import com.terrain.explorer.terrain.model.TerrainDebugInfo
 import com.terrain.explorer.terrain.model.TerrainTile
 
 /**
- * Chooses the highest-quality legal DEM provider for a geographic tile,
- * then falls back through regional → global → parent LOD.
+ * Chooses a DEM provider for a geographic tile.
+ * Prefers fast Terrarium/global first so Android never stalls on slow APIs;
+ * regional providers can still win when they return a tile quickly.
  */
 class ProviderSelector(
     private val registry: ProviderRegistry,
@@ -18,19 +19,27 @@ class ProviderSelector(
     suspend fun getTile(x: Int, y: Int, level: Int): TerrainTile? {
         val (lat, lon) = GeographicTiling.center(x, y, level)
         val candidates = registry.all()
-            .filter { it.getCoverage().contains(lat, lon) }
+            .filter { it.getCoverage().contains(lat, lon) && level <= it.getMetadata().maxLevel }
             .mapNotNull { provider ->
                 val res = provider.getResolutionMeters(lat, lon, level) ?: return@mapNotNull null
                 Ranked(provider, res)
             }
+            // Fast global baseline first; then finer regional. Never block the phone
+            // behind a single slow "best resolution" provider.
             .sortedWith(
-                compareBy<Ranked> { it.resolutionMeters }
+                compareBy<Ranked> {
+                    when (it.provider.id) {
+                        GlobalDemProvider.ID -> 0
+                        Usgs3depProvider.ID -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.resolutionMeters }
                     .thenByDescending { it.provider.priority },
             )
 
         for (ranked in candidates) {
             val tile = runCatching { ranked.provider.getTile(x, y, level) }.getOrNull()
-            if (tile != null) {
+            if (tile != null && tile.heights.isNotEmpty()) {
                 lastDebug = TerrainDebugInfo(
                     providerId = tile.providerId,
                     resolutionMeters = tile.resolutionMeters,
@@ -42,15 +51,10 @@ class ProviderSelector(
             }
         }
 
-        // Parent LOD fallback within the same request chain.
-        val parent = GeographicTiling.parent(x, y, level) ?: return null
-        val parentTile = getTile(parent.first, parent.second, parent.third) ?: return null
-        // Do not upsample fake detail; return null so Cesium uses its own parent geometry.
-        // We still record debug from the parent attempt.
         lastDebug = TerrainDebugInfo(
-            providerId = parentTile.providerId,
-            resolutionMeters = parentTile.resolutionMeters,
-            level = parent.third,
+            providerId = "none",
+            resolutionMeters = Double.NaN,
+            level = level,
             cacheHit = false,
             offline = false,
         )

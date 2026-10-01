@@ -67,7 +67,8 @@ fun TerrainWebView(
                     }
                 }
                 addJavascriptInterface(bridge, "AndroidBridge")
-                loadUrl("http://127.0.0.1:$tileServerPort/?port=$tileServerPort")
+                // Flag before scripts run so DEM LOD stays phone-safe (L12 max).
+                loadUrl("http://127.0.0.1:$tileServerPort/?port=$tileServerPort&android=1")
                 webViewRef(this)
                 webView.clear()
                 webView.add(this)

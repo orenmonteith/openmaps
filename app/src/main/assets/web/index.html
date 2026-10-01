@@ -17,6 +17,7 @@
       if (location.port) return location.port;
       return "8765";
     })();
+    window.OPENMAPS_ANDROID = /[?&]android=1(?:&|$)/.test(location.search || "");
     window.CESIUM_BASE_URL = "cesium/";
   </script>
   <script src="js/terrain-bridge.js"></script>

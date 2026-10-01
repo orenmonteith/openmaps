@@ -7,11 +7,12 @@
   var viewer = null;
   var imageryLayer = null;
   var lowPower = false;
+  var isAndroid = !!(global.OPENMAPS_ANDROID || global.AndroidBridge);
   var interactTimer = null;
   var settleTimer = null;
   var lodReportTimer = null;
   var userEntity = null;
-  var lastLod = { imageryZ: 19, sse: 4, resolutionScale: 1 };
+  var lastLod = { imageryZ: 17, sse: 4, resolutionScale: 1 };
 
   function showWebGlError(detail) {
     var el = document.getElementById("cesiumContainer");
@@ -245,59 +246,54 @@
     var terrainLevel;
     var preloadSiblings;
     var fogDensity;
-    // terrainLevel targets mesh spacing ≈ 111320*180/(2^L)/64 meters
-    // L15≈10 m, L16≈5 m, L17≈2.4 m, L18≈1.2 m (USGS 3DEP can feed ~1 m in US lidar).
+    // Phone-safe DEM: Android max L12 (~76 m mesh / ~30 m Terrarium source).
+    // Deeper LODs (L15–18) flooded the Pixel tile server and left multi-km parents.
+    var maxTerrain = isAndroid ? 12 : 13;
     if (agl > 2.0e5) {
-      sse = 8.0;
-      imageryZ = 11;
+      sse = isAndroid ? 8.0 : 7.0;
+      imageryZ = 12;
       terrainLevel = 6;
       preloadSiblings = true;
       fogDensity = 0.00002;
     } else if (agl > 5.0e4) {
-      sse = 5.0;
-      imageryZ = 13;
+      sse = isAndroid ? 5.5 : 4.5;
+      imageryZ = 14;
       terrainLevel = 8;
       preloadSiblings = true;
       fogDensity = 0.00003;
     } else if (agl > 1.2e4) {
-      sse = 2.8;
-      imageryZ = 15;
+      sse = isAndroid ? 3.2 : 2.6;
+      imageryZ = 16;
       terrainLevel = 10;
-      preloadSiblings = true;
+      preloadSiblings = false;
       fogDensity = 0.00004;
     } else if (agl > 4.0e3) {
-      sse = 1.5;
+      sse = isAndroid ? 2.0 : 1.5;
       imageryZ = 17;
-      terrainLevel = 13;
+      terrainLevel = 11;
       preloadSiblings = false;
       fogDensity = 0.00005;
     } else if (agl > 1.2e3) {
-      sse = 0.7;
+      sse = isAndroid ? 1.2 : 0.85;
       imageryZ = 18;
-      terrainLevel = 15;
+      terrainLevel = maxTerrain;
       preloadSiblings = false;
       fogDensity = 0.00007;
       scale = lowPower ? 0.85 : 1.0;
-    } else if (agl > 350) {
-      sse = 0.35;
-      imageryZ = 19;
-      terrainLevel = 17;
+    } else {
+      // Close ski-scout — finest phone-safe DEM
+      sse = isAndroid ? 0.85 : 0.45;
+      imageryZ = isAndroid ? 18 : 19;
+      terrainLevel = maxTerrain;
       preloadSiblings = false;
       fogDensity = 0.0001;
       scale = lowPower ? 0.9 : 1.0;
-    } else {
-      // Super close — push toward ~1 m DEM mesh (L18)
-      sse = 0.2;
-      imageryZ = 19;
-      terrainLevel = 18;
-      preloadSiblings = false;
-      fogDensity = 0.00014;
-      scale = lowPower ? 0.95 : 1.0;
     }
+    terrainLevel = Math.min(terrainLevel, maxTerrain);
     if (lowPower) {
-      sse = Math.max(sse, 1.4);
-      imageryZ = Math.min(imageryZ, 17);
-      terrainLevel = Math.min(terrainLevel, 14);
+      sse = Math.max(sse, 1.6);
+      imageryZ = Math.min(imageryZ, 16);
+      terrainLevel = Math.min(terrainLevel, 11);
     }
     return {
       sse: sse,
