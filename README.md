@@ -1,19 +1,20 @@
 # OpenMaps
 
-Worldwide, offline-first **3D terrain** for Android: real DEM elevation meshes with satellite imagery draped on the surface — not hillshade.
+Worldwide, offline-first **3D terrain** for Android: real DEM elevation meshes with satellite or topographic imagery draped on the surface — not hillshade.
 
-## Features (MVP)
+## Features
 
-- Pluggable DEM providers (`TerrainDataProvider`) — USGS 3DEP (US) + global Terrarium/SRTM-class baseline
-- Stable worldwide **Esri satellite** layer (max Z 19) — SSE/prefetch sharpen when close; no layer thrash
-- Imagery selector: Esri worldwide + USGS Imagery override in the US at high zoom
-- Near-frustum imagery prefetch (paused on low battery / offline); tile 404s are never cached
+- **Map modes** (shared camera position when switching):
+  - **Flat** — 2D OpenStreetMap
+  - **3D Sat** — satellite draped on DEM (Fatmap-style scout)
+  - **3D Topo** — OpenTopoMap (OSM contours) draped on DEM
+- **Deferred DEM mesh** — smooth ellipsoid globe until you get close enough for contours (~42 km AGL); then terrain engages
+- **Download area** — cache DEM + satellite + OSM + topo tiles for ~18 km around the current view for offline use
+- Pluggable DEM providers — USGS 3DEP (US) + global Terrarium/SRTM-class baseline (phone-safe max L12)
+- Stable worldwide **Esri satellite** layer (max Z 19) — SSE/prefetch sharpen when close
 - CesiumJS WebView renderer with orbit / tilt / zoom / pan
-- GPS on-mesh marker + locate / fly-to
-- Place search (Nominatim)
-- Cache-first disk store for DEM + imagery (visited areas work offline)
-- Battery-aware rendering (`requestRenderMode`, FPS caps, WebView pause, low-power resolution scale)
-- Debug HUD: DEM, imagery source/Z, SSE, cache
+- GPS on-mesh marker + locate / fly-to + place search (Nominatim)
+- Cache-first disk store; battery-aware rendering
 
 ## Stack
 
@@ -33,14 +34,12 @@ Requirements: JDK 17+, Android SDK 35, device or emulator (API 26+).
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Grant location permission to use **Locate me**.
+Grant location permission to use **Locate me**. Use the mode chips (Flat / 3D Sat / 3D Topo) and the download FAB to pack the current area offline.
 
 ## Browser preview (terrain engine)
 
-Same Cesium assets + Terrarium DEM + Esri imagery API as the Android local server.
-Requires a browser with **WebGL** (Chrome/Firefox with GPU or SwiftShader). Embedded
-remote viewers without WebGL will show a clear error — use the Android APK on device
-for the real experience.
+Same Cesium assets + Terrarium DEM + imagery/basemap APIs as the Android local server.
+Requires a browser with **WebGL**.
 
 ```bash
 cd tools/preview-server
@@ -51,15 +50,17 @@ npm start
 
 ## Architecture
 
-See `docs/DEM_LICENSES.md` for dataset licensing and `docs/VERIFICATION.md` for multi-continent QA.
+See `docs/DEM_LICENSES.md` for dataset licensing.
 
 ```
 Android app
   ├─ GPS (FusedLocationProvider)
+  ├─ OfflinePackDownloader (region cache)
   └─ WebView ← LocalTileServer (127.0.0.1)
-                 ├─ TerrainRepository (cache-first)
-                 │    └─ ProviderSelector → USGS / Global / Regional stub
-                 └─ ImageryProvider (Esri World Imagery)
+                 ├─ TerrainRepository (cache-first DEM)
+                 ├─ ImageryProvider (Esri / USGS)
+                 ├─ OSM + OpenTopoMap basemaps
+                 └─ /offline/pack status API
 ```
 
 ## What this is not
@@ -68,4 +69,4 @@ No trails, routing, peaks, weather, accounts, or AI. Terrain engine first.
 
 ## License notes
 
-Open DEM/imagery terms are summarized in `docs/DEM_LICENSES.md`. Do not redistribute bulk DEM corpora inside the APK.
+Open DEM/imagery/OSM terms are summarized in `docs/DEM_LICENSES.md`. Do not redistribute bulk tile corpora inside the APK.

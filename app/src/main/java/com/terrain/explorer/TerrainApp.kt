@@ -5,8 +5,11 @@ import com.terrain.explorer.imagery.EsriWorldImageryProvider
 import com.terrain.explorer.imagery.ImageryPrefetcher
 import com.terrain.explorer.imagery.ImageryProvider
 import com.terrain.explorer.imagery.ImageryProviderSelector
+import com.terrain.explorer.imagery.OpenTopoMapProvider
+import com.terrain.explorer.imagery.OsmStandardProvider
 import com.terrain.explorer.imagery.UsgsImageryProvider
 import com.terrain.explorer.location.LocationFacade
+import com.terrain.explorer.offline.OfflinePackDownloader
 import com.terrain.explorer.search.GeocoderService
 import com.terrain.explorer.terrain.NetworkMonitor
 import com.terrain.explorer.terrain.TerrainRepository
@@ -23,6 +26,12 @@ class TerrainApp : Application() {
     lateinit var imageryProvider: ImageryProvider
         private set
     lateinit var imagerySelector: ImageryProviderSelector
+        private set
+    lateinit var osmProvider: ImageryProvider
+        private set
+    lateinit var topoProvider: ImageryProvider
+        private set
+    lateinit var offlinePacks: OfflinePackDownloader
         private set
     lateinit var tileServer: LocalTileServer
         private set
@@ -48,7 +57,15 @@ class TerrainApp : Application() {
             ),
         )
         imageryProvider = imagerySelector
+        osmProvider = OsmStandardProvider(cache)
+        topoProvider = OpenTopoMapProvider(cache)
         imageryPrefetcher = ImageryPrefetcher(imagerySelector)
+        offlinePacks = OfflinePackDownloader(
+            terrainRepository = terrainRepository,
+            satellite = imagerySelector,
+            osm = osmProvider,
+            topo = topoProvider,
+        )
         geocoder = GeocoderService()
         locationFacade = LocationFacade(this)
         tileServer = LocalTileServer(
@@ -56,6 +73,9 @@ class TerrainApp : Application() {
             imageryProvider = imageryProvider,
             assets = assets,
             imageryPrefetcher = imageryPrefetcher,
+            osmProvider = osmProvider,
+            topoProvider = topoProvider,
+            offlinePacks = offlinePacks,
             geocoder = geocoder,
         )
         tileServer.ensureStarted()

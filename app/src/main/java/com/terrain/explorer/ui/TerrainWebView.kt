@@ -24,12 +24,17 @@ fun TerrainWebView(
     lowPower: Boolean,
     onDebug: (TerrainDebugInfo) -> Unit,
     onReady: () -> Unit,
+    onMapModeChanged: (String) -> Unit = {},
     webViewRef: (WebView) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val bridge = remember {
-        TerrainJsBridge(onDebug = onDebug, onReady = onReady)
+        TerrainJsBridge(
+            onDebug = onDebug,
+            onReady = onReady,
+            onMapModeChanged = onMapModeChanged,
+        )
     }
 
     val webView = remember {
@@ -129,4 +134,19 @@ fun WebView.resetNorth() {
 
 fun WebView.scoutView() {
     evaluateJavascript("window.TerrainApp && window.TerrainApp.scoutView();", null)
+}
+
+fun WebView.setMapMode(mode: String) {
+    val safe = mode.replace("'", "")
+    evaluateJavascript(
+        "window.TerrainApp && window.TerrainApp.setMapMode('$safe');",
+        null,
+    )
+}
+
+fun WebView.downloadArea(radiusKm: Double = 18.0) {
+    evaluateJavascript(
+        "window.TerrainApp && window.TerrainApp.downloadArea($radiusKm);",
+        null,
+    )
 }

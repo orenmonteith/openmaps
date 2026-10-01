@@ -16,6 +16,8 @@ const HEIGHTMAP_SIZE = 65;
 const TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
 const IMAGERY =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile";
+const OSM = "https://tile.openstreetmap.org";
+const TOPO = "https://tile.opentopomap.org";
 
 const app = express();
 const pngCache = new Map();
@@ -218,6 +220,48 @@ app.get("/client/lod", (req, res) => {
 });
 app.get("/imagery/prefetch", (_req, res) => res.json({ ok: true }));
 app.get("/geocode", (_req, res) => res.json({ results: [] }));
+app.get("/offline/pack", (req, res) =>
+  res.json({
+    ok: true,
+    lat: Number(req.query.lat || 0),
+    lon: Number(req.query.lon || 0),
+    radiusKm: Number(req.query.radiusKm || 18),
+    note: "Preview stub — full packs run in the Android app",
+  }),
+);
+app.get("/offline/status", (_req, res) =>
+  res.json({
+    state: "Idle",
+    label: "",
+    done: 0,
+    total: 0,
+    fraction: 0,
+    message: "",
+    running: false,
+  }),
+);
+app.get("/offline/cancel", (_req, res) => res.json({ ok: true }));
+
+app.get("/basemap/:style/:z/:x/:y.png", async (req, res) => {
+  try {
+    const { style, z, x, y } = req.params;
+    const base = style === "topo" ? TOPO : OSM;
+    const url = `${base}/${z}/${x}/${y}.png`;
+    const upstream = await fetch(url, {
+      headers: {
+        "User-Agent": "OpenMaps-Preview/0.1 (dev; contact via repo)",
+        Accept: "image/png,image/*;q=0.8",
+      },
+    });
+    if (!upstream.ok) return res.status(404).send("no basemap");
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(buf);
+  } catch (e) {
+    res.status(404).send(String(e.message || e));
+  }
+});
 
 app.get("/terrain/:level/:x/:y.json", async (req, res) => {
   try {

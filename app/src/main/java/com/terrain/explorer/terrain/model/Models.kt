@@ -99,4 +99,6 @@ data class TerrainDebugInfo(
     val imageryZ: Int = -1,
     val sse: String = "—",
     val resolutionScale: String = "—",
+    val mapMode: String = "sat-3d",
+    val terrainMesh: Boolean = false,
 )

@@ -4,6 +4,8 @@ import android.content.res.AssetManager
 import com.terrain.explorer.imagery.ImageryPrefetcher
 import com.terrain.explorer.imagery.ImageryProvider
 import com.terrain.explorer.imagery.ImageryProviderSelector
+import com.terrain.explorer.offline.OfflinePackDownloader
+import com.terrain.explorer.offline.OfflinePackState
 import com.terrain.explorer.search.GeocoderService
 import com.terrain.explorer.terrain.TerrainRepository
 import fi.iki.elonen.NanoHTTPD
@@ -18,13 +20,16 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Serves DEM, imagery, geocode, and Cesium web assets to the WebView.
+ * Serves DEM, imagery, geocode, offline packs, and Cesium web assets to the WebView.
  */
 class LocalTileServer(
     private val terrainRepository: TerrainRepository,
     private val imageryProvider: ImageryProvider,
     private val assets: AssetManager,
     private val imageryPrefetcher: ImageryPrefetcher,
+    private val osmProvider: ImageryProvider,
+    private val topoProvider: ImageryProvider,
+    private val offlinePacks: OfflinePackDownloader,
     private val geocoder: GeocoderService = GeocoderService(),
     port: Int = 0,
 ) : NanoHTTPD("127.0.0.1", port) {
@@ -69,6 +74,7 @@ class LocalTileServer(
 
     fun shutdown() {
         imageryPrefetcher.shutdown()
+        offlinePacks.shutdown()
         stop()
         requestPool.shutdownNow()
         started.set(false)
@@ -87,14 +93,86 @@ class LocalTileServer(
                 uri == "/geocode" -> geocode(params["q"])
                 uri == "/imagery/prefetch" -> prefetch(params)
                 uri == "/client/lod" -> clientLod(params)
+                uri == "/offline/pack" -> startOfflinePack(params)
+                uri == "/offline/status" -> offlineStatus()
+                uri == "/offline/cancel" -> {
+                    offlinePacks.cancel()
+                    json(JSONObject().put("ok", true))
+                }
                 uri.startsWith("/terrain/") && uri.endsWith(".heights") -> terrainHeights(uri)
                 uri.startsWith("/terrain/") && uri.endsWith(".json") -> terrainMeta(uri)
                 uri.startsWith("/imagery/") -> imagery(uri)
+                uri.startsWith("/basemap/") -> basemap(uri)
                 uri == "/" || uri == "/index.html" -> asset("web/index.html", "text/html")
                 else -> staticAsset(uri)
             }
         } catch (e: Exception) {
             text(Response.Status.INTERNAL_ERROR, e.message ?: "error")
+        }
+    }
+
+    private fun startOfflinePack(params: Map<String, String>): Response {
+        val lat = params["lat"]?.toDoubleOrNull()
+        val lon = params["lon"]?.toDoubleOrNull()
+        val radiusKm = params["radiusKm"]?.toDoubleOrNull() ?: 18.0
+        if (lat == null || lon == null) {
+            return text(Response.Status.BAD_REQUEST, "lat/lon required")
+        }
+        offlinePacks.downloadAround(lat, lon, radiusKm = radiusKm.coerceIn(5.0, 40.0))
+        return json(
+            JSONObject()
+                .put("ok", true)
+                .put("lat", lat)
+                .put("lon", lon)
+                .put("radiusKm", radiusKm),
+        )
+    }
+
+    private fun offlineStatus(): Response {
+        val p = offlinePacks.progress.value
+        return json(
+            JSONObject()
+                .put("state", p.state.name)
+                .put("label", p.label)
+                .put("done", p.done)
+                .put("total", p.total)
+                .put("fraction", p.fraction.toDouble())
+                .put("message", p.message)
+                .put("running", p.state == OfflinePackState.Running),
+        )
+    }
+
+    private fun basemap(uri: String): Response {
+        val rest = uri.removePrefix("/basemap/").removeSuffix(".jpg").removeSuffix(".png")
+        val parts = rest.split('/')
+        if (parts.size != 4) return text(Response.Status.BAD_REQUEST, "bad basemap path")
+        val style = parts[0]
+        val z = parts[1].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad z")
+        val x = parts[2].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad x")
+        val y = parts[3].toIntOrNull() ?: return text(Response.Status.BAD_REQUEST, "bad y")
+        val provider = when (style) {
+            "osm" -> osmProvider
+            "topo" -> topoProvider
+            else -> return text(Response.Status.BAD_REQUEST, "unknown basemap")
+        }
+        val bytes = runBlocking { provider.getTile(z, x, y) }
+        if (bytes == null) {
+            return text(Response.Status.NOT_FOUND, "no basemap").also {
+                it.addHeader("Cache-Control", "no-store")
+            }
+        }
+        val mime = when {
+            bytes.size >= 2 && (bytes[0].toInt() and 0xff) == 0x89 -> "image/png"
+            else -> "image/jpeg"
+        }
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            mime,
+            ByteArrayInputStream(bytes),
+            bytes.size.toLong(),
+        ).also {
+            addCors(it)
+            it.addHeader("Cache-Control", "public, max-age=86400")
         }
     }
 
@@ -173,6 +251,7 @@ class LocalTileServer(
             is ImageryProviderSelector -> imageryProvider.lastSourceId
             else -> imageryProvider.id
         }
+        val pack = offlinePacks.progress.value
         val json = JSONObject()
             .put("providerId", d.providerId)
             .put("resolutionMeters", if (d.resolutionMeters.isNaN()) JSONObject.NULL else d.resolutionMeters)
@@ -184,6 +263,9 @@ class LocalTileServer(
             .put("sse", lastSse.get())
             .put("resolutionScale", lastResolutionScale.get())
             .put("attribution", imageryProvider.attribution)
+            .put("offlinePackState", pack.state.name)
+            .put("offlinePackDone", pack.done)
+            .put("offlinePackTotal", pack.total)
         return json(json)
     }
 

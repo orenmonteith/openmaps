@@ -7,6 +7,7 @@ import org.json.JSONObject
 class TerrainJsBridge(
     private val onDebug: (TerrainDebugInfo) -> Unit,
     private val onReady: () -> Unit,
+    private val onMapModeChanged: (String) -> Unit = {},
 ) {
     @JavascriptInterface
     fun onTerrainDebug(json: String) {
@@ -23,6 +24,8 @@ class TerrainJsBridge(
                     imageryZ = obj.optInt("imageryZ", -1),
                     sse = obj.optString("sse", "—"),
                     resolutionScale = obj.optString("resolutionScale", "—"),
+                    mapMode = obj.optString("mapMode", "sat-3d"),
+                    terrainMesh = obj.optBoolean("terrainMesh", false),
                 ),
             )
         } catch (_: Exception) {
@@ -33,5 +36,10 @@ class TerrainJsBridge(
     @JavascriptInterface
     fun onEngineReady() {
         onReady()
+    }
+
+    @JavascriptInterface
+    fun onMapModeChanged(mode: String) {
+        onMapModeChanged.invoke(mode)
     }
 }

@@ -82,6 +82,38 @@ Imagery provider id: `esri-world-imagery`
 
 Imagery provider id: `usgs-imagery`
 
+## OpenStreetMap standard tiles
+
+| Field | Value |
+| --- | --- |
+| Dataset | OpenStreetMap standard raster tiles |
+| Coverage | Global |
+| Source | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` |
+| License | ODbL — © OpenStreetMap contributors |
+| Attribution | © OpenStreetMap contributors — https://www.openstreetmap.org/copyright |
+| Use in OpenMaps | Flat map mode + offline packs |
+| Policy | Identify with app User-Agent; no bulk mirroring beyond on-device cache; polite concurrency |
+
+Imagery provider id: `osm-standard`
+
+## OpenTopoMap
+
+| Field | Value |
+| --- | --- |
+| Dataset | OpenTopoMap (OSM + SRTM-derived contours / relief) |
+| Coverage | Global (tile availability varies) |
+| Source | `https://tile.opentopomap.org/{z}/{x}/{y}.png` |
+| License | Map style © OpenTopoMap (CC-BY-SA); data © OpenStreetMap contributors |
+| Attribution | © OpenStreetMap contributors, SRTM \| Map style: © OpenTopoMap (CC-BY-SA) |
+| Use in OpenMaps | 3D Topo mode (draped on DEM) + offline packs |
+| Max zoom | 17 |
+
+Imagery provider id: `opentopomap`
+
+## Offline region packs
+
+Downloaded tiles (DEM + satellite + OSM + topo) are stored in the on-device `GeoLodDiskCache` only. Packs are user-initiated for a limited radius (~5–40 km). Do not ship prebuilt global corpora in the APK.
+
 ## Geocoding (runtime)
 
 | Service | Use | Notes |

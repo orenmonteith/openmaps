@@ -65,6 +65,10 @@
     });
   }
 
+  function createEllipsoidTerrainProvider() {
+    return new Cesium.EllipsoidTerrainProvider();
+  }
+
   function createLocalImageryProvider(maximumLevel) {
     var maxZ = typeof maximumLevel === "number" ? maximumLevel : 19;
     return new Cesium.UrlTemplateImageryProvider({
@@ -80,10 +84,32 @@
     });
   }
 
+  function createBasemapProvider(style, maximumLevel) {
+    var maxZ =
+      typeof maximumLevel === "number"
+        ? maximumLevel
+        : style === "topo"
+          ? 17
+          : 19;
+    return new Cesium.UrlTemplateImageryProvider({
+      url: tileServerBase() + "/basemap/" + style + "/{z}/{x}/{y}.png",
+      tilingScheme: new Cesium.WebMercatorTilingScheme(),
+      minimumLevel: 0,
+      maximumLevel: maxZ,
+      tileWidth: 256,
+      tileHeight: 256,
+      hasAlphaChannel: true,
+      enablePickFeatures: false,
+      credit: style === "topo" ? "OpenTopoMap" : "OpenStreetMap"
+    });
+  }
+
   global.TerrainBridge = {
     tileServerBase: tileServerBase,
     createLocalTerrainProvider: createLocalTerrainProvider,
+    createEllipsoidTerrainProvider: createEllipsoidTerrainProvider,
     createLocalImageryProvider: createLocalImageryProvider,
+    createBasemapProvider: createBasemapProvider,
     setMaxTerrainLevel: setMaxTerrainLevel,
     MAX_TERRAIN_LEVEL: MAX_TERRAIN_LEVEL
   };

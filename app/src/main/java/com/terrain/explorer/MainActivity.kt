@@ -15,12 +15,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MyLocation
@@ -28,6 +31,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -35,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,12 +53,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import com.terrain.explorer.offline.OfflinePackState
 import com.terrain.explorer.search.GeocodeResult
 import com.terrain.explorer.terrain.model.TerrainDebugInfo
 import com.terrain.explorer.ui.TerrainWebView
+import com.terrain.explorer.ui.downloadArea
 import com.terrain.explorer.ui.flyTo
 import com.terrain.explorer.ui.resetNorth
 import com.terrain.explorer.ui.scoutView
+import com.terrain.explorer.ui.setMapMode
 import com.terrain.explorer.ui.showUserLocation
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -113,6 +121,14 @@ private val Deep = Color(0xFF0B1C24)
 private val Accent = Color(0xFF2BB673)
 private val Panel = Color(0xCC0E2430)
 private val Ink = Color(0xFFE6F2EC)
+private val ChipIdle = Color(0x66142630)
+private val ChipActive = Color(0xFF1E5C42)
+
+private enum class MapModeUi(val id: String, val label: String) {
+    FlatOsm("flat-osm", "Flat"),
+    Sat3d("sat-3d", "3D Sat"),
+    Topo3d("topo-3d", "3D Topo"),
+}
 
 @Composable
 private fun TerrainTheme(content: @Composable () -> Unit) {
@@ -140,7 +156,15 @@ private fun TerrainScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<GeocodeResult>>(emptyList()) }
+    var mapMode by remember { mutableStateOf(MapModeUi.Sat3d) }
+    val packProgress by app.offlinePacks.progress.collectAsState()
     val scope = rememberCoroutineScope()
+
+    val attribution = when (mapMode) {
+        MapModeUi.FlatOsm -> app.osmProvider.attribution
+        MapModeUi.Topo3d -> app.topoProvider.attribution
+        MapModeUi.Sat3d -> app.imageryProvider.attribution
+    }
 
     Box(
         modifier = Modifier
@@ -152,6 +176,9 @@ private fun TerrainScreen(
             lowPower = lowPower,
             onDebug = { debug = it },
             onReady = { },
+            onMapModeChanged = { id ->
+                mapMode = MapModeUi.entries.firstOrNull { it.id == id } ?: MapModeUi.Sat3d
+            },
             webViewRef = { webView = it },
             modifier = Modifier.fillMaxSize(),
         )
@@ -170,6 +197,14 @@ private fun TerrainScreen(
                     scope.launch {
                         results = app.geocoder.search(query)
                     }
+                },
+            )
+
+            ModeSelector(
+                selected = mapMode,
+                onSelect = { mode ->
+                    mapMode = mode
+                    webView?.setMapMode(mode.id)
                 },
             )
 
@@ -198,6 +233,18 @@ private fun TerrainScreen(
                 }
             }
 
+            if (packProgress.state == OfflinePackState.Running ||
+                packProgress.state == OfflinePackState.Done ||
+                packProgress.state == OfflinePackState.Error
+            ) {
+                OfflinePackBanner(
+                    message = packProgress.message.ifBlank { packProgress.label },
+                    fraction = packProgress.fraction,
+                    running = packProgress.state == OfflinePackState.Running,
+                    onCancel = { app.offlinePacks.cancel() },
+                )
+            }
+
             if (showDebug) {
                 DebugPanel(debug = debug, cacheMb = app.cache.usageBytes() / (1024.0 * 1024.0))
             }
@@ -216,6 +263,17 @@ private fun TerrainScreen(
                 contentColor = Ink,
             ) {
                 Icon(Icons.Default.Info, contentDescription = "Toggle debug")
+            }
+            FloatingActionButton(
+                onClick = {
+                    if (packProgress.state != OfflinePackState.Running) {
+                        webView?.downloadArea(18.0)
+                    }
+                },
+                containerColor = if (packProgress.state == OfflinePackState.Running) ChipIdle else Panel,
+                contentColor = Ink,
+            ) {
+                Icon(Icons.Default.CloudDownload, contentDescription = "Download area offline")
             }
             FloatingActionButton(
                 onClick = { webView?.scoutView() },
@@ -252,7 +310,7 @@ private fun TerrainScreen(
         }
 
         Text(
-            text = app.imageryProvider.attribution,
+            text = attribution,
             color = Ink.copy(alpha = 0.65f),
             fontSize = 10.sp,
             modifier = Modifier
@@ -260,6 +318,94 @@ private fun TerrainScreen(
                 .padding(12.dp)
                 .fillMaxWidth(0.7f),
         )
+    }
+}
+
+@Composable
+private fun ModeSelector(
+    selected: MapModeUi,
+    onSelect: (MapModeUi) -> Unit,
+) {
+    Surface(color = Panel, shape = RoundedCornerShape(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            MapModeUi.entries.forEach { mode ->
+                val active = mode == selected
+                Surface(
+                    color = if (active) ChipActive else ChipIdle,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(mode) },
+                ) {
+                    Text(
+                        text = mode.label,
+                        color = Ink,
+                        fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        modifier = Modifier
+                            .padding(vertical = 10.dp)
+                            .fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflinePackBanner(
+    message: String,
+    fraction: Float,
+    running: Boolean,
+    onCancel: () -> Unit,
+) {
+    Surface(color = Panel, shape = RoundedCornerShape(12.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (running) "Downloading area…" else "Offline pack",
+                    color = Accent,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                )
+                if (running) {
+                    Text(
+                        text = "Cancel",
+                        color = Ink.copy(alpha = 0.8f),
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .clickable(onClick = onCancel)
+                            .padding(4.dp),
+                    )
+                }
+            }
+            Text(text = message, color = Ink, fontSize = 12.sp)
+            if (running) {
+                LinearProgressIndicator(
+                    progress = { fraction.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = Accent,
+                    trackColor = Ink.copy(alpha = 0.15f),
+                )
+            }
+        }
     }
 }
 
@@ -316,25 +462,26 @@ private fun DebugPanel(debug: TerrainDebugInfo, cacheMb: Double) {
     Surface(
         color = Panel,
         shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.widthIn(max = 420.dp),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("DEBUG", color = Accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                DebugItem("Mode", debug.mapMode)
+                DebugItem("Mesh", if (debug.terrainMesh) "on" else "off")
                 DebugItem("DEM", debug.providerId)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DebugItem(
                     "DEM m",
                     if (debug.resolutionMeters.isNaN()) "—" else "${"%.0f".format(debug.resolutionMeters)}",
                 )
                 DebugItem("LOD", if (debug.level < 0) "—" else debug.level.toString())
+                DebugItem("Imagery", debug.imagerySource)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                DebugItem("Imagery", debug.imagerySource)
                 DebugItem("Img Z", if (debug.imageryZ < 0) "—" else debug.imageryZ.toString())
                 DebugItem("SSE", debug.sse)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                DebugItem("Scale", debug.resolutionScale)
-                DebugItem("Cache", if (debug.cacheHit) "hit" else "miss")
                 DebugItem("Disk", "${"%.0f".format(cacheMb)} MB")
             }
         }

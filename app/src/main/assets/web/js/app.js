@@ -1,11 +1,18 @@
 /**
- * OpenMaps Cesium viewer — stable worldwide imagery, performance-first LOD.
+ * OpenMaps Cesium viewer — map modes, deferred DEM, Fatmap-style offline packs.
+ *
+ * Modes:
+ *   flat-osm  — 2D OpenStreetMap, no DEM mesh
+ *   sat-3d    — 3D satellite (DEM only when close enough for contours)
+ *   topo-3d   — 3D OpenTopoMap draped on DEM
  */
 (function (global) {
   "use strict";
 
   var viewer = null;
   var imageryLayer = null;
+  var demTerrainProvider = null;
+  var ellipsoidTerrain = null;
   var lowPower = false;
   var isAndroid = !!(global.OPENMAPS_ANDROID || global.AndroidBridge);
   var interactTimer = null;
@@ -13,6 +20,16 @@
   var lodReportTimer = null;
   var userEntity = null;
   var lastLod = { imageryZ: 17, sse: 4, resolutionScale: 1 };
+  var mapMode = "sat-3d";
+  var terrainMeshActive = false;
+  // Contours only matter near the surface — keep the globe cheap until then.
+  var TERRAIN_ENABLE_AGL = 42000;
+  var TERRAIN_DISABLE_AGL = 75000;
+  var MODE_ATTRIBUTION = {
+    "flat-osm": "© OpenStreetMap contributors",
+    "sat-3d": "Satellite · DEM terrain",
+    "topo-3d": "© OpenStreetMap / OpenTopoMap · DEM terrain"
+  };
 
   function showWebGlError(detail) {
     var el = document.getElementById("cesiumContainer");
@@ -111,6 +128,146 @@
     throw lastErr || new Error("Failed to construct Cesium.Viewer");
   }
 
+  function captureCamera() {
+    if (!viewer) return null;
+    var c = viewer.camera.positionCartographic;
+    return {
+      lon: Cesium.Math.toDegrees(c.longitude),
+      lat: Cesium.Math.toDegrees(c.latitude),
+      height: c.height,
+      heading: viewer.camera.heading,
+      pitch: viewer.camera.pitch,
+      roll: viewer.camera.roll
+    };
+  }
+
+  function restoreCamera(snap, forceNadir) {
+    if (!viewer || !snap) return;
+    var pitch = forceNadir
+      ? Cesium.Math.toRadians(-90)
+      : typeof snap.pitch === "number"
+        ? snap.pitch
+        : Cesium.Math.toRadians(-42);
+    var heading =
+      typeof snap.heading === "number" ? snap.heading : Cesium.Math.toRadians(35);
+    var height = Math.max(120, snap.height || 4200);
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(snap.lon, snap.lat, height),
+      orientation: {
+        heading: heading,
+        pitch: pitch,
+        roll: typeof snap.roll === "number" ? snap.roll : 0
+      }
+    });
+  }
+
+  function imageryTuningForMode(mode) {
+    if (!imageryLayer) return;
+    if (mode === "sat-3d") {
+      imageryLayer.brightness = 1.06;
+      imageryLayer.contrast = 1.05;
+      imageryLayer.saturation = 0.95;
+      imageryLayer.gamma = 0.96;
+    } else {
+      // OSM / topo already have cartographic contrast — keep neutral.
+      imageryLayer.brightness = 1.0;
+      imageryLayer.contrast = 1.0;
+      imageryLayer.saturation = 1.0;
+      imageryLayer.gamma = 1.0;
+    }
+  }
+
+  function providerForMode(mode) {
+    if (mode === "flat-osm") {
+      return TerrainBridge.createBasemapProvider("osm", 19);
+    }
+    if (mode === "topo-3d") {
+      return TerrainBridge.createBasemapProvider("topo", 17);
+    }
+    return TerrainBridge.createLocalImageryProvider(19);
+  }
+
+  function setImageryForMode(mode) {
+    if (!viewer) return;
+    viewer.imageryLayers.removeAll();
+    imageryLayer = viewer.imageryLayers.addImageryProvider(providerForMode(mode));
+    imageryTuningForMode(mode);
+  }
+
+  function setTerrainMesh(enabled) {
+    if (!viewer || !demTerrainProvider || !ellipsoidTerrain) return;
+    if (enabled === terrainMeshActive) return;
+    viewer.terrainProvider = enabled ? demTerrainProvider : ellipsoidTerrain;
+    terrainMeshActive = enabled;
+    viewer.scene.globe.depthTestAgainstTerrain = enabled;
+    viewer.scene.globe.terrainExaggeration = enabled ? 1.45 : 1.0;
+  }
+
+  function syncDeferredTerrain(agl) {
+    if (!viewer || mapMode === "flat-osm") {
+      setTerrainMesh(false);
+      return;
+    }
+    if (!terrainMeshActive && agl <= TERRAIN_ENABLE_AGL) {
+      setTerrainMesh(true);
+    } else if (terrainMeshActive && agl >= TERRAIN_DISABLE_AGL) {
+      setTerrainMesh(false);
+    }
+  }
+
+  function applySceneMode(mode, snap) {
+    if (!viewer) return;
+    var scene = viewer.scene;
+    if (mode === "flat-osm") {
+      setTerrainMesh(false);
+      if (scene.mode !== Cesium.SceneMode.SCENE2D) {
+        scene.morphTo2D(0.6);
+      }
+      setTimeout(function () {
+        restoreCamera(snap, true);
+        updateLod(true);
+        viewer.scene.requestRender();
+      }, 650);
+    } else {
+      if (scene.mode !== Cesium.SceneMode.SCENE3D) {
+        scene.morphTo3D(0.6);
+      }
+      setTimeout(function () {
+        // Prefer scout pitch when returning from flat 2D.
+        var restored = snap
+          ? Object.assign({}, snap, {
+              pitch:
+                Math.abs(snap.pitch + Math.PI / 2) < 0.15
+                  ? Cesium.Math.toRadians(-42)
+                  : snap.pitch
+            })
+          : null;
+        restoreCamera(restored, false);
+        syncDeferredTerrain(cameraAgl());
+        updateLod(true);
+        viewer.scene.requestRender();
+      }, 650);
+    }
+  }
+
+  function setMapMode(mode) {
+    if (!viewer) return;
+    var next = mode === "flat-osm" || mode === "topo-3d" || mode === "sat-3d" ? mode : "sat-3d";
+    if (next === mapMode) return;
+    var snap = captureCamera();
+    mapMode = next;
+    setImageryForMode(mapMode);
+    applySceneMode(mapMode, snap);
+    notifyModeChanged();
+    viewer.scene.requestRender();
+  }
+
+  function notifyModeChanged() {
+    if (global.AndroidBridge && global.AndroidBridge.onMapModeChanged) {
+      global.AndroidBridge.onMapModeChanged(mapMode);
+    }
+  }
+
   function init() {
     if (!global.Cesium || !global.TerrainBridge) {
       setTimeout(init, 50);
@@ -124,9 +281,12 @@
 
     Cesium.Ion.defaultAccessToken = undefined;
 
-    var terrainProvider = TerrainBridge.createLocalTerrainProvider();
+    demTerrainProvider = TerrainBridge.createLocalTerrainProvider();
+    ellipsoidTerrain = TerrainBridge.createEllipsoidTerrainProvider();
+    // Start on smooth globe — DEM mesh engages when the camera gets close.
     try {
-      viewer = createViewer(terrainProvider);
+      viewer = createViewer(ellipsoidTerrain);
+      terrainMeshActive = false;
     } catch (err) {
       showWebGlError(err && (err.message || err));
       return;
@@ -138,9 +298,8 @@
     scene.backgroundColor = earth;
     scene.globe.baseColor = earth;
     scene.globe.showGroundAtmosphere = false;
-    scene.globe.depthTestAgainstTerrain = true;
-    // Mild vertical relief so couloirs / fall lines read when scouting.
-    scene.globe.terrainExaggeration = 1.45;
+    scene.globe.depthTestAgainstTerrain = false;
+    scene.globe.terrainExaggeration = 1.0;
     scene.fog.enabled = true;
     scene.fog.density = 0.000035;
     scene.fog.minimumBrightness = 0.45;
@@ -162,16 +321,7 @@
     scene.globe.preloadSiblings = false;
     scene.globe.maximumScreenSpaceError = 2.0;
 
-    // ONE stable worldwide imagery layer — never tear it down while flying.
-    viewer.imageryLayers.removeAll();
-    imageryLayer = viewer.imageryLayers.addImageryProvider(
-      TerrainBridge.createLocalImageryProvider(19)
-    );
-    // Slight lift for snow / rock separation while scouting lines.
-    imageryLayer.brightness = 1.06;
-    imageryLayer.contrast = 1.05;
-    imageryLayer.saturation = 0.95;
-    imageryLayer.gamma = 0.96;
+    setImageryForMode(mapMode);
 
     scene.globe.imageryLayersUpdatedEvent.addEventListener(function () {
       viewer.scene.requestRender();
@@ -215,6 +365,8 @@
 
     bindInteractionThrottling();
     bindDynamicLod();
+    // Engage DEM immediately at the default scout altitude.
+    syncDeferredTerrain(cameraAgl());
     updateLod(true);
     viewer.scene.requestRender();
 
@@ -228,6 +380,9 @@
   /** Meters above ground — ellipsoid height is wrong on tall peaks for LOD. */
   function cameraAgl() {
     var carto = viewer.camera.positionCartographic;
+    if (!terrainMeshActive) {
+      return Math.max(100, carto.height);
+    }
     var surface = viewer.scene.globe.getHeight(carto);
     if (typeof surface !== "number" || isNaN(surface)) {
       return Math.max(100, carto.height);
@@ -247,8 +402,24 @@
     var preloadSiblings;
     var fogDensity;
     // Phone-safe DEM: Android max L12 (~76 m mesh / ~30 m Terrarium source).
-    // Deeper LODs (L15–18) flooded the Pixel tile server and left multi-km parents.
     var maxTerrain = isAndroid ? 12 : 13;
+    if (mapMode === "flat-osm") {
+      // Flat OSM is cheap — push raster detail without DEM cost.
+      if (agl > 2.0e5) imageryZ = 10;
+      else if (agl > 5.0e4) imageryZ = 13;
+      else if (agl > 1.2e4) imageryZ = 15;
+      else if (agl > 3.0e3) imageryZ = 17;
+      else imageryZ = 19;
+      return {
+        sse: 8,
+        imageryZ: imageryZ,
+        resolutionScale: scale,
+        terrainLevel: 0,
+        preloadSiblings: false,
+        fogDensity: 0.00001,
+        agl: agl
+      };
+    }
     if (agl > 2.0e5) {
       sse = isAndroid ? 8.0 : 7.0;
       imageryZ = 12;
@@ -263,19 +434,19 @@
       fogDensity = 0.00003;
     } else if (agl > 1.2e4) {
       sse = isAndroid ? 3.2 : 2.6;
-      imageryZ = 16;
+      imageryZ = mapMode === "topo-3d" ? 15 : 16;
       terrainLevel = 10;
       preloadSiblings = false;
       fogDensity = 0.00004;
     } else if (agl > 4.0e3) {
       sse = isAndroid ? 2.0 : 1.5;
-      imageryZ = 17;
+      imageryZ = mapMode === "topo-3d" ? 16 : 17;
       terrainLevel = 11;
       preloadSiblings = false;
       fogDensity = 0.00005;
     } else if (agl > 1.2e3) {
       sse = isAndroid ? 1.2 : 0.85;
-      imageryZ = 18;
+      imageryZ = mapMode === "topo-3d" ? 17 : 18;
       terrainLevel = maxTerrain;
       preloadSiblings = false;
       fogDensity = 0.00007;
@@ -283,13 +454,17 @@
     } else {
       // Close ski-scout — finest phone-safe DEM
       sse = isAndroid ? 0.85 : 0.45;
-      imageryZ = isAndroid ? 18 : 19;
+      imageryZ = mapMode === "topo-3d" ? 17 : isAndroid ? 18 : 19;
       terrainLevel = maxTerrain;
       preloadSiblings = false;
       fogDensity = 0.0001;
       scale = lowPower ? 0.9 : 1.0;
     }
     terrainLevel = Math.min(terrainLevel, maxTerrain);
+    if (!terrainMeshActive) {
+      terrainLevel = 0;
+      sse = Math.max(sse, 3.5);
+    }
     if (lowPower) {
       sse = Math.max(sse, 1.6);
       imageryZ = Math.min(imageryZ, 16);
@@ -325,6 +500,8 @@
 
   function updateLod(force) {
     if (!viewer) return;
+    var agl = cameraAgl();
+    syncDeferredTerrain(agl);
     var lod = lodForAgl(cameraAgl());
     applyLod(lod);
     lastLod = lod;
@@ -355,7 +532,7 @@
       var agl = cameraAgl();
       var lod = lodForAgl(agl);
       // Settled + close → squeeze SSE harder so z18/z19 imagery fills the near face.
-      if (agl < 8000) {
+      if (mapMode !== "flat-osm" && terrainMeshActive && agl < 8000) {
         var sharp = Math.max(0.18, lod.sse * 0.7);
         if (agl < 800) sharp = Math.min(sharp, 0.2);
         else if (agl < 2000) sharp = Math.min(sharp, 0.3);
@@ -370,16 +547,18 @@
       var c = viewer.camera.positionCartographic;
       var lat = Cesium.Math.toDegrees(c.latitude);
       var lon = Cesium.Math.toDegrees(c.longitude);
-      var z = agl < 1500 ? 19 : agl < 4000 ? 18 : 16;
-      fetch(
-        TerrainBridge.tileServerBase() +
-          "/imagery/prefetch?lat=" +
-          lat +
-          "&lon=" +
-          lon +
-          "&z=" +
-          z
-      ).catch(function () {});
+      if (mapMode === "sat-3d") {
+        var z = agl < 1500 ? 19 : agl < 4000 ? 18 : 16;
+        fetch(
+          TerrainBridge.tileServerBase() +
+            "/imagery/prefetch?lat=" +
+            lat +
+            "&lon=" +
+            lon +
+            "&z=" +
+            z
+        ).catch(function () {});
+      }
     }, 300);
   }
 
@@ -420,6 +599,8 @@
         d.imageryZ = lastLod.imageryZ;
         d.sse = String(lastLod.sse);
         d.resolutionScale = String(lastLod.resolutionScale);
+        d.mapMode = mapMode;
+        d.terrainMesh = terrainMeshActive;
         if (global.AndroidBridge && global.AndroidBridge.onTerrainDebug) {
           global.AndroidBridge.onTerrainDebug(JSON.stringify(d));
         }
@@ -430,16 +611,39 @@
       });
   }
 
+  function downloadAreaAroundCamera(radiusKm) {
+    if (!viewer) return Promise.resolve({ ok: false });
+    var c = viewer.camera.positionCartographic;
+    var lat = Cesium.Math.toDegrees(c.latitude);
+    var lon = Cesium.Math.toDegrees(c.longitude);
+    var r = typeof radiusKm === "number" ? radiusKm : 18;
+    return fetch(
+      TerrainBridge.tileServerBase() +
+        "/offline/pack?lat=" +
+        encodeURIComponent(lat) +
+        "&lon=" +
+        encodeURIComponent(lon) +
+        "&radiusKm=" +
+        encodeURIComponent(r)
+    ).then(function (res) {
+      return res.json();
+    });
+  }
+
   global.TerrainApp = {
     flyTo: function (lat, lon, height) {
       if (!viewer) return;
       // Default into a ski-scout band: close enough for lines, high enough for context.
       height = height || 3200;
+      var pitch =
+        mapMode === "flat-osm"
+          ? Cesium.Math.toRadians(-90)
+          : Cesium.Math.toRadians(-40);
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
         orientation: {
           heading: Cesium.Math.toRadians(28),
-          pitch: Cesium.Math.toRadians(-40),
+          pitch: pitch,
           roll: 0
         },
         duration: 2.0,
@@ -453,6 +657,10 @@
     /** Re-pitch current view for fall-line / ridge scouting. */
     scoutView: function () {
       if (!viewer) return;
+      if (mapMode === "flat-osm") {
+        setMapMode("sat-3d");
+        return;
+      }
       var cam = viewer.camera;
       var c = cam.positionCartographic;
       var h = Math.max(400, Math.min(c.height, 8000));
@@ -484,17 +692,33 @@
         destination: cam.positionWC,
         orientation: {
           heading: 0,
-          pitch: Cesium.Math.toRadians(-40),
+          pitch:
+            mapMode === "flat-osm"
+              ? Cesium.Math.toRadians(-90)
+              : Cesium.Math.toRadians(-40),
           roll: 0
         },
         duration: 0.5
       });
     },
     setTerrainExaggeration: function (amount) {
-      if (!viewer) return;
+      if (!viewer || !terrainMeshActive) return;
       viewer.scene.globe.terrainExaggeration =
         typeof amount === "number" ? Math.max(1, Math.min(amount, 2.5)) : 1.45;
       viewer.scene.requestRender();
+    },
+    setMapMode: setMapMode,
+    getMapMode: function () {
+      return mapMode;
+    },
+    getCameraCenter: function () {
+      return captureCamera();
+    },
+    downloadArea: function (radiusKm) {
+      return downloadAreaAroundCamera(radiusKm);
+    },
+    attributionForMode: function () {
+      return MODE_ATTRIBUTION[mapMode] || "";
     },
     pause: function () {
       if (!viewer) return;
