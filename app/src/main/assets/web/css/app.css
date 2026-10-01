@@ -62,3 +62,43 @@ html, body, #cesiumContainer {
   background: rgba(0, 0, 0, 0.28);
   border-radius: 8px;
 }
+
+/* Preview-only mode bar (hidden on Android WebView). */
+.mode-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(14, 36, 48, 0.88);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.mode-bar[hidden] {
+  display: none !important;
+}
+
+.mode-bar button {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(20, 38, 48, 0.4);
+  color: #e6f2ec;
+  font: 600 13px/1 "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.mode-bar button.active {
+  background: #1e5c42;
+}
+
+.mode-bar button.download {
+  background: rgba(43, 182, 115, 0.22);
+  color: #9fe3c0;
+}

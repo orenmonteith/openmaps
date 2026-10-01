@@ -370,11 +370,43 @@
     updateLod(true);
     viewer.scene.requestRender();
 
+    bindPreviewModeBar();
+
     if (global.AndroidBridge && global.AndroidBridge.onEngineReady) {
       global.AndroidBridge.onEngineReady();
     }
 
     pollDebug();
+  }
+
+  /** Lightweight mode UI for browser preview — Android uses Compose chips instead. */
+  function bindPreviewModeBar() {
+    var bar = document.getElementById("modeBar");
+    if (!bar || isAndroid) return;
+    bar.hidden = false;
+    var buttons = bar.querySelectorAll("button[data-mode]");
+    function paint() {
+      buttons.forEach(function (btn) {
+        if (btn.getAttribute("data-mode") === mapMode) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+    }
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setMapMode(btn.getAttribute("data-mode"));
+        paint();
+      });
+    });
+    var dl = document.getElementById("downloadAreaBtn");
+    if (dl) {
+      dl.addEventListener("click", function () {
+        downloadAreaAroundCamera(18).catch(function () {});
+      });
+    }
+    paint();
   }
 
   /** Meters above ground — ellipsoid height is wrong on tall peaks for LOD. */

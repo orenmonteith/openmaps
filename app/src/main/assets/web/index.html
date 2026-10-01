@@ -10,6 +10,12 @@
 </head>
 <body>
   <div id="cesiumContainer"></div>
+  <div id="modeBar" class="mode-bar" hidden>
+    <button type="button" data-mode="flat-osm">Flat</button>
+    <button type="button" data-mode="sat-3d" class="active">3D Sat</button>
+    <button type="button" data-mode="topo-3d">3D Topo</button>
+    <button type="button" id="downloadAreaBtn" class="download">Download area</button>
+  </div>
   <script>
     window.TERRAIN_PORT = (function () {
       var m = /[?&]port=(\d+)/.exec(location.search || "");
