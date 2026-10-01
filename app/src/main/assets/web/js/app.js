@@ -22,6 +22,8 @@
   var lastLod = { imageryZ: 17, sse: 4, resolutionScale: 1 };
   var mapMode = "sat-3d";
   var terrainMeshActive = false;
+  /** Last oblique 3D pose, restored when leaving the flat chart. */
+  var saved3dView = null;
   // Contours only matter near the surface — keep the globe cheap until then.
   var TERRAIN_ENABLE_AGL = 42000;
   var TERRAIN_DISABLE_AGL = 75000;
@@ -192,6 +194,11 @@
     viewer.imageryLayers.removeAll();
     imageryLayer = viewer.imageryLayers.addImageryProvider(providerForMode(mode));
     imageryTuningForMode(mode);
+    // Flat OSM reads as a chart — kill winter-sun / atmosphere shading.
+    var lit = mode !== "flat-osm";
+    viewer.scene.globe.enableLighting = lit;
+    viewer.scene.skyAtmosphere.show = lit;
+    viewer.scene.fog.enabled = lit;
   }
 
   function setTerrainMesh(enabled) {
@@ -215,50 +222,69 @@
     }
   }
 
-  function applySceneMode(mode, snap) {
-    if (!viewer) return;
-    var scene = viewer.scene;
-    if (mode === "flat-osm") {
-      setTerrainMesh(false);
-      if (scene.mode !== Cesium.SceneMode.SCENE2D) {
-        scene.morphTo2D(0.6);
-      }
-      setTimeout(function () {
-        restoreCamera(snap, true);
-        updateLod(true);
-        viewer.scene.requestRender();
-      }, 650);
-    } else {
-      if (scene.mode !== Cesium.SceneMode.SCENE3D) {
-        scene.morphTo3D(0.6);
-      }
-      setTimeout(function () {
-        // Prefer scout pitch when returning from flat 2D.
-        var restored = snap
-          ? Object.assign({}, snap, {
-              pitch:
-                Math.abs(snap.pitch + Math.PI / 2) < 0.15
-                  ? Cesium.Math.toRadians(-42)
-                  : snap.pitch
-            })
-          : null;
-        restoreCamera(restored, false);
-        syncDeferredTerrain(cameraAgl());
-        updateLod(true);
-        viewer.scene.requestRender();
-      }, 650);
-    }
+  function applyFlatChart(snap) {
+    var controller = viewer.scene.screenSpaceCameraController;
+    setTerrainMesh(false);
+    controller.enableTilt = false;
+    controller.enableLook = false;
+    var flatH = Math.max(800, Math.min(snap.height || 4200, 120000));
+    restoreCamera(
+      {
+        lon: snap.lon,
+        lat: snap.lat,
+        height: flatH,
+        heading: 0,
+        pitch: Cesium.Math.toRadians(-90),
+        roll: 0
+      },
+      true,
+    );
+  }
+
+  function applySaved3d(snap) {
+    var controller = viewer.scene.screenSpaceCameraController;
+    controller.enableTilt = true;
+    controller.enableLook = true;
+    restoreCamera(
+      {
+        lon: snap.lon,
+        lat: snap.lat,
+        height: Math.max(400, snap.height || 4200),
+        heading: typeof snap.heading === "number" ? snap.heading : Cesium.Math.toRadians(35),
+        pitch: typeof snap.pitch === "number" ? snap.pitch : Cesium.Math.toRadians(-42),
+        roll: 0
+      },
+      false,
+    );
+    syncDeferredTerrain(cameraAgl());
   }
 
   function setMapMode(mode) {
     if (!viewer) return;
     var next = mode === "flat-osm" || mode === "topo-3d" || mode === "sat-3d" ? mode : "sat-3d";
     if (next === mapMode) return;
-    var snap = captureCamera();
-    mapMode = next;
-    setImageryForMode(mapMode);
-    applySceneMode(mapMode, snap);
+    var fromFlat = mapMode === "flat-osm";
+    if (next === "flat-osm") {
+      // Remember the scout pose before dropping to a north-up chart.
+      saved3dView = captureCamera();
+      mapMode = next;
+      setImageryForMode(mapMode);
+      applyFlatChart(saved3dView);
+    } else if (fromFlat && saved3dView) {
+      mapMode = next;
+      setImageryForMode(mapMode);
+      applySaved3d(saved3dView);
+    } else {
+      // Sat ↔ topo: same camera, only the draped layer changes.
+      mapMode = next;
+      setImageryForMode(mapMode);
+      viewer.scene.screenSpaceCameraController.enableTilt = true;
+      viewer.scene.screenSpaceCameraController.enableLook = true;
+      syncDeferredTerrain(cameraAgl());
+    }
+    updateLod(true);
     notifyModeChanged();
+    paintPreviewModeBar();
     viewer.scene.requestRender();
   }
 
@@ -266,6 +292,18 @@
     if (global.AndroidBridge && global.AndroidBridge.onMapModeChanged) {
       global.AndroidBridge.onMapModeChanged(mapMode);
     }
+  }
+
+  function paintPreviewModeBar() {
+    var bar = document.getElementById("modeBar");
+    if (!bar || bar.hidden) return;
+    bar.querySelectorAll("button[data-mode]").forEach(function (btn) {
+      if (btn.getAttribute("data-mode") === mapMode) {
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("active");
+      }
+    });
   }
 
   function init() {
@@ -384,29 +422,30 @@
     var bar = document.getElementById("modeBar");
     if (!bar || isAndroid) return;
     bar.hidden = false;
-    var buttons = bar.querySelectorAll("button[data-mode]");
-    function paint() {
-      buttons.forEach(function (btn) {
-        if (btn.getAttribute("data-mode") === mapMode) {
-          btn.classList.add("active");
-        } else {
-          btn.classList.remove("active");
-        }
-      });
-    }
-    buttons.forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        setMapMode(btn.getAttribute("data-mode"));
-        paint();
-      });
+    bar.querySelectorAll("button[data-mode]").forEach(function (btn) {
+      btn.addEventListener(
+        "click",
+        function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          setMapMode(btn.getAttribute("data-mode"));
+        },
+        true,
+      );
     });
     var dl = document.getElementById("downloadAreaBtn");
     if (dl) {
-      dl.addEventListener("click", function () {
-        downloadAreaAroundCamera(18).catch(function () {});
-      });
+      dl.addEventListener(
+        "click",
+        function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          downloadAreaAroundCamera(18).catch(function () {});
+        },
+        true,
+      );
     }
-    paint();
+    paintPreviewModeBar();
   }
 
   /** Meters above ground — ellipsoid height is wrong on tall peaks for LOD. */

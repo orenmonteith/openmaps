@@ -65,17 +65,18 @@ html, body, #cesiumContainer {
 
 /* Preview-only mode bar (hidden on Android WebView). */
 .mode-bar {
-  position: absolute;
+  position: fixed;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: 9999;
   display: flex;
   gap: 4px;
   padding: 4px;
   background: rgba(14, 36, 48, 0.88);
   border-radius: 12px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
 }
 
 .mode-bar[hidden] {
@@ -92,6 +93,9 @@ html, body, #cesiumContainer {
   color: #e6f2ec;
   font: 600 13px/1 "Segoe UI", system-ui, sans-serif;
   cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .mode-bar button.active {
