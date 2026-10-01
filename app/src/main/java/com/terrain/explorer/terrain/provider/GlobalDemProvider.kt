@@ -48,8 +48,8 @@ class GlobalDemProvider(
         commercialUse = "Generally permitted for open DEM components; verify product-specific terms before redistribution of derived commercial products.",
         redistribution = "Do not bundle the global DEM in the APK. Runtime fetch + local device cache only.",
         apiNotes = "HTTPS PNG Terrarium tiles; no API key. Rate/bandwidth courtesy limits apply.",
-        // Cap where further subdivision no longer adds real DEM detail (~30 m).
-        maxLevel = 11,
+        // Mesh may refine past source; resolutionMeters stays ≥ ~30 m (honest).
+        maxLevel = 14,
     )
 
     companion object {

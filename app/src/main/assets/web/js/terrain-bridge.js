@@ -4,8 +4,10 @@
 (function (global) {
   "use strict";
 
-  var MAX_TERRAIN_LEVEL = 11;
-  var activeTerrainLevel = 9;
+  // L18 ≈ 1.2 m mesh spacing (65² heightmap). USGS 3DEP can feed ~1 m in-lidar US;
+  // global Terrarium stays honest ~30 m even if the mesh goes finer.
+  var MAX_TERRAIN_LEVEL = 18;
+  var activeTerrainLevel = 11;
 
   function tileServerBase() {
     return "http://127.0.0.1:" + (global.TERRAIN_PORT || "8765");
@@ -17,7 +19,7 @@
 
   /** Cap DEM refinement by camera distance — far views skip deep terrain levels. */
   function setMaxTerrainLevel(level) {
-    var n = typeof level === "number" ? level : 10;
+    var n = typeof level === "number" ? level : 11;
     activeTerrainLevel = Math.max(5, Math.min(MAX_TERRAIN_LEVEL, n | 0));
   }
 

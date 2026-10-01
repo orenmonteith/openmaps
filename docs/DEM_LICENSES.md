@@ -8,7 +8,7 @@ This document records datasets used by OpenMaps. Runtime fetch + on-device cache
 | --- | --- |
 | Dataset | USGS 3D Elevation Program (3DEP) |
 | Coverage | United States and territories (product availability varies) |
-| Resolution | Seamless ~1/3 arc-second (~10 m) widely; 1 m lidar-derived products in selected areas (MVP reports ≥10 m unless a confirmed 1 m product is queried) |
+| Resolution | Multi-res mosaic: 1 m lidar where published, else ~10 m (1/3") / coarser. OpenMaps requests dense samples at high LOD and reports mesh spacing floored at 1 m when 3DEP succeeds. |
 | Source | https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer |
 | License | Public domain |
 | Attribution | Data available from U.S. Geological Survey, National Geospatial Program. |

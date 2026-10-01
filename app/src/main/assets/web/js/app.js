@@ -245,8 +245,9 @@
     var terrainLevel;
     var preloadSiblings;
     var fogDensity;
+    // terrainLevel targets mesh spacing ≈ 111320*180/(2^L)/64 meters
+    // L15≈10 m, L16≈5 m, L17≈2.4 m, L18≈1.2 m (USGS 3DEP can feed ~1 m in US lidar).
     if (agl > 2.0e5) {
-      // Continent / range overview
       sse = 8.0;
       imageryZ = 11;
       terrainLevel = 6;
@@ -255,42 +256,40 @@
     } else if (agl > 5.0e4) {
       sse = 5.0;
       imageryZ = 13;
-      terrainLevel = 7;
+      terrainLevel = 8;
       preloadSiblings = true;
       fogDensity = 0.00003;
     } else if (agl > 1.2e4) {
       sse = 2.8;
       imageryZ = 15;
-      terrainLevel = 8;
+      terrainLevel = 10;
       preloadSiblings = true;
       fogDensity = 0.00004;
     } else if (agl > 4.0e3) {
       sse = 1.5;
       imageryZ = 17;
-      terrainLevel = 9;
+      terrainLevel = 13;
       preloadSiblings = false;
       fogDensity = 0.00005;
     } else if (agl > 1.2e3) {
-      // Approach — start sharpening the mountain you're on
-      sse = 0.75;
+      sse = 0.7;
       imageryZ = 18;
-      terrainLevel = 11;
+      terrainLevel = 15;
       preloadSiblings = false;
       fogDensity = 0.00007;
       scale = lowPower ? 0.85 : 1.0;
     } else if (agl > 350) {
-      // Ski-scout band — Google Earth-ish clarity on the near face
-      sse = 0.38;
+      sse = 0.35;
       imageryZ = 19;
-      terrainLevel = 11;
+      terrainLevel = 17;
       preloadSiblings = false;
       fogDensity = 0.0001;
       scale = lowPower ? 0.9 : 1.0;
     } else {
-      // Super close — max imagery / DEM on what fills the screen
-      sse = 0.22;
+      // Super close — push toward ~1 m DEM mesh (L18)
+      sse = 0.2;
       imageryZ = 19;
-      terrainLevel = 11;
+      terrainLevel = 18;
       preloadSiblings = false;
       fogDensity = 0.00014;
       scale = lowPower ? 0.95 : 1.0;
@@ -298,7 +297,7 @@
     if (lowPower) {
       sse = Math.max(sse, 1.4);
       imageryZ = Math.min(imageryZ, 17);
-      terrainLevel = Math.min(terrainLevel, 9);
+      terrainLevel = Math.min(terrainLevel, 14);
     }
     return {
       sse: sse,
